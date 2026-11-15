@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  List of all compositions in the library.
+  path and thumbnail src are relative to the compositions/ folder.
+  The difficulty levels are the subfolders of each composition folder
+  (e.g. compositions/oh-tannenbaum/beginner).
+-->
+<library format-version="1">
+
+<difficulties>
+  <difficulty id="beginner">
+    <title xml:lang="de">Anfänger</title>
+    <title xml:lang="en">Beginner</title>
+  </difficulty>
+
+  <difficulty id="intermediate">
+    <title xml:lang="de">Fortgeschritten</title>
+    <title xml:lang="en">Intermediate</title>
+  </difficulty>
+
+  <difficulty id="expert">
+    <title xml:lang="de">Experte</title>
+    <title xml:lang="en">Expert</title>
+  </difficulty>
+</difficulties>
+
+<compositions>
+
+  <composition id="oh-tannenbaum" path="oh-tannenbaum">
+    <title xml:lang="de">Oh Tannenbaum</title>
+    <title xml:lang="en">Oh Christmas Tree</title>
+    <composer>Ernst Anschütz</composer>
+    <thumbnail src="oh-tannenbaum/thumbnail.png"/>
+    <tags>
+      <tag>christmas</tag>
+      <tag>folk-song</tag>
+    </tags>
+  </composition>
+
+</compositions>
+
+</library>
