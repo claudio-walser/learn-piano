@@ -149,8 +149,9 @@ pub fn rounded_rect(r: Rect, radius: f32, c: Color) {
         draw_rectangle(r.x, r.y, r.w, r.h, c);
         return;
     }
-    const SEG: usize = 5;
-    let mut v = Vec::with_capacity(4 * (SEG + 1) + 1);
+    // Fewer segments for small corners: keys and notes are drawn by the hundred.
+    let seg: usize = if rad < 5.0 { 2 } else if rad < 10.0 { 3 } else { 5 };
+    let mut v = Vec::with_capacity(4 * (seg + 1) + 1);
     let center = r.center();
     v.push(Vertex::new(center.x, center.y, 0.0, 0.0, 0.0, c));
     let corners = [
@@ -160,8 +161,8 @@ pub fn rounded_rect(r: Rect, radius: f32, c: Color) {
         (r.x + r.w - rad, r.y + rad, 270.0),
     ];
     for (cx, cy, a0) in corners {
-        for i in 0..=SEG {
-            let a = (a0 + 90.0 * i as f32 / SEG as f32).to_radians();
+        for i in 0..=seg {
+            let a = (a0 + 90.0 * i as f32 / seg as f32).to_radians();
             v.push(Vertex::new(cx + rad * a.cos(), cy + rad * a.sin(), 0.0, 0.0, 0.0, c));
         }
     }
@@ -247,12 +248,44 @@ pub fn icon_pause(c: Vec2, size: f32, color: Color) {
     draw_rectangle(c.x + s * 0.25, c.y - s, s * 0.55, s * 2.0, color);
 }
 
-pub fn icon_restart(c: Vec2, size: f32, color: Color) {
-    let r = size * 0.42;
-    draw_arc(c.x, c.y, 24, r, -60.0, 3.5, 290.0, color);
-    let a = (-60.0f32).to_radians();
-    let tip = vec2(c.x + (r + 1.5) * a.cos(), c.y + (r + 1.5) * a.sin());
-    draw_triangle(tip + vec2(-8.0, -5.0), tip + vec2(6.0, -9.0), tip + vec2(2.0, 6.0), color);
+/// Back to the start: a bar followed by a left-pointing triangle (⏮).
+pub fn icon_to_start(c: Vec2, size: f32, color: Color) {
+    let s = size * 0.5;
+    draw_rectangle(c.x - s * 0.85, c.y - s * 0.8, s * 0.3, s * 1.6, color);
+    draw_triangle(
+        vec2(c.x + s * 0.85, c.y - s * 0.8),
+        vec2(c.x + s * 0.85, c.y + s * 0.8),
+        vec2(c.x - s * 0.45, c.y),
+        color,
+    );
+}
+
+/// Repeat: two lines chasing each other around a loop (🔁).
+pub fn icon_loop(c: Vec2, size: f32, color: Color) {
+    let (w, h, t) = (size * 0.42, size * 0.26, size * 0.11);
+    let head = size * 0.16;
+    let line = |a: Vec2, b: Vec2| {
+        draw_line(c.x + a.x, c.y + a.y, c.x + b.x, c.y + b.y, t, color);
+        draw_circle(c.x + a.x, c.y + a.y, t / 2.0, color);
+    };
+    // top: left side up, then right towards the arrow
+    line(vec2(-w, h * 0.25), vec2(-w, -h));
+    line(vec2(-w, -h), vec2(w - head, -h));
+    draw_triangle(
+        vec2(c.x + w - head, c.y - h - head),
+        vec2(c.x + w - head, c.y - h + head),
+        vec2(c.x + w + head * 0.4, c.y - h),
+        color,
+    );
+    // bottom: right side down, then left towards the arrow
+    line(vec2(w, -h * 0.25), vec2(w, h));
+    line(vec2(w, h), vec2(-w + head, h));
+    draw_triangle(
+        vec2(c.x - w + head, c.y + h - head),
+        vec2(c.x - w + head, c.y + h + head),
+        vec2(c.x - w - head * 0.4, c.y + h),
+        color,
+    );
 }
 
 pub fn icon_gear(c: Vec2, size: f32, color: Color, bg: Color) {
@@ -266,7 +299,11 @@ pub fn icon_gear(c: Vec2, size: f32, color: Color, bg: Color) {
     draw_circle(c.x, c.y, r * 0.5, bg);
 }
 
-/// Unified mouse/touch pointer (macroquad maps single touches to the mouse).
+/// Unified mouse/touch pointer.
+///
+/// Touches are read directly instead of through macroquad's mouse emulation: that
+/// emulation ignores cancelled touches (the button then stays down forever) and
+/// loses the press when a touch starts and ends within one frame.
 #[derive(Clone, Copy, Default)]
 pub struct Pointer {
     pub pos: Vec2,
@@ -277,16 +314,48 @@ pub struct Pointer {
     pub released: bool,
     /// Largest distance from the press position during this gesture.
     pub moved: f32,
+    /// The finger currently acting as the pointer.
+    touch_id: Option<u64>,
 }
 
 const TAP_SLOP: f32 = 18.0;
 
 impl Pointer {
     pub fn update(&mut self) {
-        let pos = Vec2::from(mouse_position()) / scale();
-        self.pressed = is_mouse_button_pressed(MouseButton::Left);
-        self.down = is_mouse_button_down(MouseButton::Left);
-        self.released = is_mouse_button_released(MouseButton::Left);
+        let s = scale();
+        let mut pos = Vec2::from(mouse_position()) / s;
+        let mut pressed = is_mouse_button_pressed(MouseButton::Left);
+        let mut down = is_mouse_button_down(MouseButton::Left);
+        let mut released = is_mouse_button_released(MouseButton::Left);
+
+        for t in touches() {
+            let tpos = t.position / s;
+            let ours = self.touch_id == Some(t.id);
+            match t.phase {
+                // A new finger takes over; this also recovers if the end of the
+                // previous touch never arrived.
+                TouchPhase::Started => {
+                    self.touch_id = Some(t.id);
+                    (pressed, down, pos) = (true, true, tpos);
+                }
+                TouchPhase::Moved | TouchPhase::Stationary if ours => {
+                    (down, pos) = (true, tpos);
+                }
+                TouchPhase::Ended | TouchPhase::Cancelled if ours => {
+                    self.touch_id = None;
+                    (released, down, pos) = (true, false, tpos);
+                }
+                // Started and ended within one frame: only the end is left.
+                TouchPhase::Ended | TouchPhase::Cancelled if self.touch_id.is_none() && !pressed => {
+                    (pressed, released, down, pos) = (true, true, false, tpos);
+                }
+                _ => {}
+            }
+        }
+
+        self.pressed = pressed;
+        self.down = down;
+        self.released = released;
         self.delta = if self.down && !self.pressed { pos - self.pos } else { Vec2::ZERO };
         if self.pressed {
             self.press_pos = pos;

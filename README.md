@@ -21,10 +21,16 @@ und läuft direkt auf dem Host.
 ./target/release/learn-piano                 # sucht compositions.xml im aktuellen Ordner
 ./target/release/learn-piano --library DIR   # oder in DIR
 ./target/release/learn-piano --fullscreen
+./target/release/learn-piano --x11          # X11/XWayland erzwingen (Standard: Wayland, falls die Sitzung Wayland ist)
+./target/release/learn-piano --debug        # FPS und Eingaben anzeigen, Log in ~/.local/share/learn-piano/debug.log
 ```
 
 Ohne `--library` wird außerdem `$LEARN_PIANO_LIBRARY` und der Ordner des Binaries
 (samt übergeordneten Ordnern) durchsucht.
+
+In einer Wayland-Sitzung läuft die App nativ unter Wayland, sonst unter X11.
+Unter XWayland funktioniert Touch nicht (es kommt nie ein Loslassen an); mit `--x11`
+bzw. `--wayland` oder `LEARN_PIANO_BACKEND=x11|wayland` lässt sich die Wahl erzwingen.
 
 Ein MIDI-Keyboard wird automatisch erkannt (auch wenn es später eingesteckt wird).
 Ohne Keyboard kann man die Tasten auf dem Bildschirm antippen.

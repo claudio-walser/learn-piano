@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::i18n::Lang;
+use crate::keyboard::KeyboardSize;
 use crate::practice::{Hands, Mode};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -18,6 +19,10 @@ pub struct Settings {
     pub mode: Mode,
     pub hands: Hands,
     pub tempo: f64,
+    /// On-screen keyboard size; `Auto` fits it to the lesson.
+    pub keyboard: KeyboardSize,
+    /// Start the lesson again automatically when it ends.
+    pub repeat: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +34,8 @@ impl Default for Settings {
             mode: Mode::Wait,
             hands: Hands::Both,
             tempo: 1.0,
+            keyboard: KeyboardSize::Auto,
+            repeat: false,
         }
     }
 }

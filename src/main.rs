@@ -1,4 +1,6 @@
 mod audio;
+mod debug;
+mod fireworks;
 mod i18n;
 mod keyboard;
 mod library;
@@ -14,8 +16,9 @@ use std::sync::Arc;
 use macroquad::prelude::*;
 
 use audio::{Audio, Status};
+use fireworks::Fireworks;
 use i18n::{Lang, Strings};
-use keyboard::{is_black, KeyLayout};
+use keyboard::{is_black, KeyLayout, KeyboardSize};
 use library::{Lesson, Library};
 use midi::{Midi, MidiEvent};
 use practice::{Hand, Hands, Judge, Mode, Practice, Summary};
@@ -33,14 +36,48 @@ fn window_conf() -> Conf {
         window_height: 800,
         high_dpi: true,
         fullscreen: std::env::args().any(|a| a == "--fullscreen"),
-        sample_count: 1,
+        // 0, not 1: EGL treats this as a minimum, and GPUs without MSAA (old Intel) then
+        // offer no config at all. GLX treats 0 and 1 the same.
+        sample_count: 0,
         window_resizable: true,
+        platform: miniquad::conf::Platform {
+            // Under XWayland, touch arrives only as emulated mouse events, which do not
+            // reach the app on every system. Native Wayland delivers real touch events.
+            linux_backend: if use_wayland() {
+                miniquad::conf::LinuxBackend::WaylandWithX11Fallback
+            } else {
+                miniquad::conf::LinuxBackend::X11Only
+            },
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
 
+/// Native Wayland in a Wayland session, X11 otherwise.
+///
+/// Under XWayland, touches never send a button release, so taps don't work.
+/// `--x11` / `--wayland` (or `LEARN_PIANO_BACKEND=x11|wayland`) override the choice.
+fn use_wayland() -> bool {
+    let arg = |a: &str| std::env::args().any(|x| x == a);
+    let env = std::env::var("LEARN_PIANO_BACKEND").unwrap_or_default();
+    if arg("--x11") || env == "x11" {
+        return false;
+    }
+    if arg("--wayland") || env == "wayland" {
+        return true;
+    }
+    // The screenshot tour reads the framebuffer back, which only works on X11.
+    if std::env::var_os("LEARN_PIANO_SHOTS").is_some() {
+        return false;
+    }
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
+    // Pointer handles touches itself (see ui::Pointer).
+    simulate_mouse_with_touch(false);
     let mut app = App::new();
     loop {
         app.frame();
@@ -62,6 +99,10 @@ struct Player {
     practice: Practice,
     range: (u8, u8),
     result: Option<Summary>,
+    /// Result of the previous run while repeating, with the time it ended.
+    last_run: Option<(Summary, f64)>,
+    /// Celebration for a run above 90 %.
+    fireworks: Option<Fireworks>,
     touch_key: Option<u8>,
 }
 
@@ -87,6 +128,8 @@ struct App {
     shots: Option<(std::path::PathBuf, u32)>,
     scroll: f32,
     show_settings: bool,
+    /// `--debug`: FPS and raw input overlay plus log file.
+    debug: Option<debug::Debug>,
 }
 
 fn lesson_key(lib: &Library, c: usize, l: usize, lesson: &Lesson) -> String {
@@ -154,6 +197,7 @@ impl App {
             scroll: 0.0,
             show_settings: false,
             shots: std::env::var_os("LEARN_PIANO_SHOTS").map(|d| (d.into(), 0)),
+            debug: debug::Debug::from_env(),
         }
     }
 
@@ -164,6 +208,15 @@ impl App {
     fn frame(&mut self) {
         begin_frame();
         self.pointer.update();
+        if let Some(d) = &mut self.debug {
+            let name = match &self.screen {
+                Screen::Dashboard => "dashboard",
+                Screen::Difficulty(_) => "difficulty",
+                Screen::Player(_) => "player",
+                Screen::Error(_) => "error",
+            };
+            d.input(name);
+        }
         self.midi.poll(get_time());
         let events: Vec<MidiEvent> = self.midi.rx.try_iter().collect();
         clear_background(BG);
@@ -198,6 +251,9 @@ impl App {
         }
         if let Some(a) = action {
             self.apply(a);
+        }
+        if let Some(d) = &self.debug {
+            d.draw(&self.fonts);
         }
         self.screenshot_tour();
     }
@@ -274,8 +330,8 @@ impl App {
         if let Some(full) = level.lessons.last().filter(|_| !lesson.is_full).and_then(|f| score::load(&f.path).ok()) {
             pitches.extend(full.notes.iter().map(|n| n.pitch));
         }
-        let range = keyboard::range_for(pitches.into_iter());
         let st = &self.progress.settings;
+        let range = keyboard::range_for(st.keyboard, pitches.into_iter());
         let practice = Practice::new(score, st.mode, st.hands, st.tempo);
         self.screen = Screen::Player(Box::new(Player {
             comp: c,
@@ -284,6 +340,8 @@ impl App {
             practice,
             range,
             result: None,
+            last_run: None,
+            fireworks: None,
             touch_key: None,
         }));
     }
@@ -514,11 +572,29 @@ impl App {
                 let key = lesson_key(lib, p.comp, p.level, &level.lessons[p.lesson]);
                 self.progress.record(key, sum.stars, sum.percent);
             }
-            p.result = Some(sum);
+            if p.practice.mode != Mode::Listen && sum.percent > 90.0 {
+                p.fireworks = Some(Fireworks::new());
+            }
+            if self.progress.settings.repeat {
+                p.practice.restart(&self.audio);
+                p.last_run = Some((sum, get_time()));
+            } else {
+                p.result = Some(sum);
+            }
         }
 
         self.draw_waterfall(&p.practice, &keys, wf);
         self.draw_keyboard(&p.practice, &keys);
+        if let Some(fx) = &mut p.fireworks {
+            fx.update(get_frame_time(), Rect::new(0.0, 0.0, w, h));
+            if fx.finished() {
+                p.fireworks = None;
+            }
+        }
+        // Without the result overlay the fireworks go over the waterfall.
+        if let Some(fx) = p.fireworks.as_ref().filter(|_| p.result.is_none()) {
+            fx.draw();
+        }
 
         // Status texts in the waterfall
         let f = &self.fonts;
@@ -536,6 +612,17 @@ impl App {
         }
         if self.midi.port_name.is_none() {
             pill(s.no_midi, MUTED, true);
+        }
+        if let Some((sum, at)) = p.last_run {
+            if get_time() - at < 5.0 {
+                // Result of the previous run, centered at the top of the waterfall
+                let txt = format!("{:.0} %", sum.percent);
+                let tw = text_width(&f.bold, &txt, 18.0);
+                let r = Rect::new(w / 2.0 - (tw + 140.0) / 2.0, wf.y + 14.0, tw + 140.0, 36.0);
+                rounded_rect(r, 18.0, alpha(BG, 0.85));
+                stars_row(r.x + 60.0, r.y + 18.0, 9.0, sum.stars);
+                text_left(&f.bold, &txt, r.x + 116.0, r.y + 18.0, 18.0, TEXT);
+            }
         }
         if p.practice.paused {
             draw_rectangle(wf.x, wf.y, wf.w, wf.h, alpha(BLACK, 0.45));
@@ -593,7 +680,7 @@ impl App {
         text_left(&f.regular, &sub, 80.0, 50.0, fit_size(&f.regular, &sub, 17.0, title_w), diff_col);
 
         // Control row
-        let total = 380.0 + 320.0 + 250.0 + 2.0 * 52.0 + 4.0 * 16.0;
+        let total = 380.0 + 320.0 + 250.0 + 3.0 * 52.0 + 5.0 * 16.0;
         let k = ((w - 32.0) / total).min(1.0);
         let cy = top_h + 6.0;
         let mut x = 16.0;
@@ -634,15 +721,24 @@ impl App {
             let st = &self.progress.settings;
             p.practice.configure(st.mode, st.hands, &self.audio);
             p.result = None;
+            p.last_run = None;
             self.progress.save();
         }
         let b = 52.0;
         let r_pause = Rect::new(w - 16.0 - b, cy - 1.0, b, b);
         let r_restart = Rect::new(r_pause.x - 12.0 - b, cy - 1.0, b, b);
-        if r_restart.x > x - 8.0 {
-            if icon_button(ptr, r_restart, PANEL, |c| icon_restart(c, 30.0, TEXT)) {
+        let r_repeat = Rect::new(r_restart.x - 12.0 - b, cy - 1.0, b, b);
+        if r_repeat.x > x - 8.0 {
+            let repeat = self.progress.settings.repeat;
+            let (bg, fg) = if repeat { (TEXT, BG) } else { (PANEL, TEXT) };
+            if icon_button(ptr, r_repeat, bg, |c| icon_loop(c, 30.0, fg)) {
+                self.progress.settings.repeat = !repeat;
+                self.progress.save();
+            }
+            if icon_button(ptr, r_restart, PANEL, |c| icon_to_start(c, 24.0, TEXT)) {
                 p.practice.restart(&self.audio);
                 p.result = None;
+                p.last_run = None;
             }
             let paused = p.practice.paused;
             if icon_button(ptr, r_pause, PANEL, |c| {
@@ -662,7 +758,7 @@ impl App {
 
         if let Some(sum) = p.result {
             let is_last = p.lesson + 1 >= level.lessons.len();
-            match self.result_overlay(&sum, p.practice.mode, is_last) {
+            match self.result_overlay(&sum, p.practice.mode, is_last, p.fireworks.as_ref()) {
                 Some(true) => {
                     p.practice.restart(&self.audio);
                     p.result = None;
@@ -698,6 +794,9 @@ impl App {
 
         let pulse = ((get_time() * 5.0).sin() * 0.5 + 0.5) as f32;
         let notes = &pr.score.notes;
+        // Text is drawn after all shapes: mixing them splits the frame into many
+        // small GPU draw calls, which makes old Intel GPUs flicker.
+        let mut labels: Vec<(u8, f32, f32, f32)> = vec![];
         // White-key notes first so black-key notes stay visible on top.
         for black_pass in [false, true] {
             for (i, n) in notes.iter().enumerate() {
@@ -736,13 +835,16 @@ impl App {
                     if tall && (pr.is_user[i] || pr.mode == Mode::Listen) {
                         let cy = (bot_c - rad - 4.0).max(r.y + rad);
                         draw_circle(x + lw / 2.0, cy, rad, alpha(WHITE, 0.92));
-                        text_center(&self.fonts.bold, &fg.to_string(), x + lw / 2.0, cy, rad * 1.45, BG);
+                        labels.push((fg, x + lw / 2.0, cy, rad * 1.45));
                     }
                 }
             }
         }
         // Hit line
         draw_rectangle(wf.x, wf.y + wf.h - 3.0, wf.w, 3.0, alpha(WHITE, 0.25));
+        for (fg, x, y, size) in labels {
+            text_center(&self.fonts.bold, &fg.to_string(), x, y, size, BG);
+        }
     }
 
     fn draw_keyboard(&self, pr: &Practice, keys: &KeyLayout) {
@@ -785,6 +887,9 @@ impl App {
             }
         };
 
+        // Shapes first, text afterwards (see draw_waterfall).
+        let mut names: Vec<(String, f32, f32, f32)> = vec![];
+        let mut fingers: Vec<(u8, f32, f32, f32)> = vec![];
         for black in [false, true] {
             for p in keys.pitches().filter(|&p| is_black(p) == black) {
                 let k = keys.key(p).unwrap();
@@ -797,27 +902,36 @@ impl App {
                 if !black && p % 12 == 0 {
                     let name = keyboard::note_name(p);
                     let fs = fit_size(&self.fonts.regular, &name, 15.0, k.w - 6.0);
-                    text_center(&self.fonts.regular, &name, k.x + k.w / 2.0, k.y + k.h - 16.0, fs, MUTED);
+                    names.push((name, k.x + k.w / 2.0, k.y + k.h - 16.0, fs));
                 }
                 if let Some((h, Some(fg))) = target[p as usize] {
                     let rad = (k.w * 0.34).min(15.0);
                     let cy = if black { k.y + k.h - rad - 8.0 } else { k.y + k.h - rad - 32.0 };
                     draw_circle(k.x + k.w / 2.0, cy, rad, hand_color(h));
-                    text_center(&self.fonts.bold, &fg.to_string(), k.x + k.w / 2.0, cy, rad * 1.4, BG);
+                    fingers.push((fg, k.x + k.w / 2.0, cy, rad * 1.4));
                 }
             }
         }
         // Felt strip
         draw_rectangle(kb.x, kb.y - 4.0, kb.w, 4.0, rgb(0x7a1f2b));
+        for (name, x, y, size) in names {
+            text_center(&self.fonts.regular, &name, x, y, size, MUTED);
+        }
+        for (fg, x, y, size) in fingers {
+            text_center(&self.fonts.bold, &fg.to_string(), x, y, size, BG);
+        }
     }
 
     /// Returns Some(true) = repeat, Some(false) = next.
-    fn result_overlay(&self, sum: &Summary, mode: Mode, is_last: bool) -> Option<bool> {
+    fn result_overlay(&self, sum: &Summary, mode: Mode, is_last: bool, fireworks: Option<&Fireworks>) -> Option<bool> {
         let s = self.s();
         let f = &self.fonts;
         let ptr = &self.pointer;
         let (w, h) = (vw(), vh());
         draw_rectangle(0.0, 0.0, w, h, alpha(BLACK, 0.6));
+        if let Some(fx) = fireworks {
+            fx.draw();
+        }
         let pw = 560.0f32.min(w - 32.0);
         let ph = if mode == Mode::Listen { 230.0 } else { 420.0f32.min(h - 32.0) };
         let panel = Rect::new((w - pw) / 2.0, (h - ph) / 2.0, pw, ph);
@@ -866,7 +980,7 @@ impl App {
         let (w, h) = (vw(), vh());
         draw_rectangle(0.0, 0.0, w, h, alpha(BLACK, 0.6));
         let pw = 620.0f32.min(w - 32.0);
-        let ph = 420.0f32.min(h - 32.0);
+        let ph = 530.0f32.min(h - 32.0);
         let panel = Rect::new((w - pw) / 2.0, (h - ph) / 2.0, pw, ph);
         rounded_rect(panel, 22.0, PANEL);
         let f = &self.fonts;
@@ -899,6 +1013,16 @@ impl App {
         if let Some(i) = segmented(f, &ptr, seg_rect(2), &[s.on, s.off], if fsn { 0 } else { 1 }, TEXT, 18.0) {
             self.progress.settings.fullscreen = i == 0;
             set_fullscreen(i == 0);
+            changed = true;
+        }
+        // Seven choices don't fit next to the label: give them the full width.
+        text_left(&f.regular, s.keyboard_size, panel.x + 32.0, row(3), 20.0, TEXT);
+        let sizes = KeyboardSize::ALL;
+        let labels = sizes.map(|k| if k == KeyboardSize::Auto { s.auto } else { k.label() });
+        let ki = sizes.iter().position(|&k| k == self.progress.settings.keyboard).unwrap_or(0);
+        let kb_rect = Rect::new(panel.x + 24.0, row(3) + 26.0, pw - 48.0, 52.0);
+        if let Some(i) = segmented(f, &ptr, kb_rect, &labels, ki, TEXT, 18.0) {
+            self.progress.settings.keyboard = sizes[i];
             changed = true;
         }
         let close = Rect::new(panel.x + pw - 24.0 - 180.0, panel.y + ph - 84.0, 180.0, 60.0);
