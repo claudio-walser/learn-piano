@@ -127,9 +127,78 @@ struct App {
     /// Dev aid: `LEARN_PIANO_SHOTS=<dir>` walks through all screens, saves PNGs and quits.
     shots: Option<(std::path::PathBuf, u32)>,
     scroll: f32,
+    /// Dashboard filter: search text, selected category and the carousel's scroll offset.
+    search: String,
+    search_focus: bool,
+    category: Option<String>,
+    category_scroll: f32,
     show_settings: bool,
+    /// Folder picker for the library (opened from the settings or the error screen).
+    browser: Option<Browser>,
     /// `--debug`: FPS and raw input overlay plus log file.
     debug: Option<debug::Debug>,
+}
+
+/// In-app folder picker: works the same with mouse and touch and needs no desktop portal.
+struct Browser {
+    dir: std::path::PathBuf,
+    /// Subfolders with a flag whether they contain a library.
+    entries: Vec<(String, std::path::PathBuf, bool)>,
+    scroll: f32,
+}
+
+impl Browser {
+    fn open(dir: std::path::PathBuf) -> Browser {
+        let mut b = Browser { dir: std::path::PathBuf::new(), entries: Vec::new(), scroll: 0.0 };
+        b.go(dir);
+        b
+    }
+
+    fn go(&mut self, dir: std::path::PathBuf) {
+        self.entries = library::subfolders(&dir)
+            .into_iter()
+            .map(|(n, p)| {
+                let lib = library::resolve(&p).is_some();
+                (n, p, lib)
+            })
+            .collect();
+        self.dir = dir;
+        self.scroll = 0.0;
+    }
+}
+
+/// Shows `~` for the home folder.
+fn display_path(p: &std::path::Path) -> String {
+    match dirs::home_dir().and_then(|h| p.strip_prefix(&h).ok().map(|r| r.to_path_buf())) {
+        Some(r) if r.as_os_str().is_empty() => "~".into(),
+        Some(r) => format!("~/{}", r.display()),
+        None => p.display().to_string(),
+    }
+}
+
+/// Loads the library and its thumbnails; on failure the error screen.
+fn load_library(root: Result<std::path::PathBuf, Option<std::path::PathBuf>>, s: &Strings) -> (Option<Library>, Vec<Option<Texture2D>>, Screen) {
+    let lib = match root {
+        Ok(root) => Library::load(&root),
+        Err(Some(dir)) => Err(format!("{}: {}", display_path(&dir), s.no_library_here)),
+        Err(None) => Err(s.no_library.to_string()),
+    };
+    match lib {
+        Ok(l) => {
+            let thumbs = l
+                .compositions
+                .iter()
+                .map(|c| {
+                    let bytes = std::fs::read(c.thumbnail.as_ref()?).ok()?;
+                    let tex = Texture2D::from_file_with_format(&bytes, None);
+                    tex.set_filter(FilterMode::Linear);
+                    Some(tex)
+                })
+                .collect();
+            (Some(l), thumbs, Screen::Dashboard)
+        }
+        Err(e) => (None, Vec::new(), Screen::Error(e)),
+    }
 }
 
 fn lesson_key(lib: &Library, c: usize, l: usize, lesson: &Lesson) -> String {
@@ -156,28 +225,9 @@ impl App {
     fn new() -> App {
         let progress = Progress::load();
         let lang = progress.settings.language.unwrap_or_else(Lang::detect);
-        let (lib, screen) = match library::find_root() {
-            Some(root) => match Library::load(&root) {
-                Ok(l) => (Some(l), Screen::Dashboard),
-                Err(e) => (None, Screen::Error(e)),
-            },
-            None => (None, Screen::Error("compositions.xml not found (use --library <dir>)".into())),
-        };
-        let thumbs = lib
-            .as_ref()
-            .map(|l| {
-                l.compositions
-                    .iter()
-                    .map(|c| {
-                        let bytes = std::fs::read(c.thumbnail.as_ref()?).ok()?;
-                        let tex = Texture2D::from_file_with_format(&bytes, None);
-                        tex.set_filter(FilterMode::Linear);
-                        Some(tex)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let audio = Audio::start(lib.as_ref().map(|l| l.root.join("sound-fonts").join("default.sf2")));
+        let root = library::find_root(progress.settings.library.as_deref());
+        let (lib, thumbs, screen) = load_library(root, lang.strings());
+        let audio = Audio::start(library::find_soundfont(lib.as_ref().map(|l| l.root.as_path())));
         let echo = Arc::new(AtomicBool::new(progress.settings.echo_input));
         let midi = Midi::new(audio.sender(), echo.clone());
         if progress.settings.fullscreen {
@@ -195,7 +245,12 @@ impl App {
             screen,
             pointer: Pointer::default(),
             scroll: 0.0,
+            search: String::new(),
+            search_focus: false,
+            category: None,
+            category_scroll: 0.0,
             show_settings: false,
+            browser: None,
             shots: std::env::var_os("LEARN_PIANO_SHOTS").map(|d| (d.into(), 0)),
             debug: debug::Debug::from_env(),
         }
@@ -224,7 +279,12 @@ impl App {
         // A modal only reacts to input from the frame after it opened; otherwise the
         // release that opened it would count as a tap outside and close it again.
         let settings_was_open = self.show_settings;
-        let ptr = if self.show_settings { Pointer::default() } else { self.pointer };
+        let browser_was_open = self.browser.is_some();
+        let modal = self.show_settings || browser_was_open;
+        if modal {
+            self.search_focus = false;
+        }
+        let ptr = if modal { Pointer::default() } else { self.pointer };
         let mut screen = std::mem::replace(&mut self.screen, Screen::Dashboard);
         let mut action = match &mut screen {
             Screen::Dashboard => self.dashboard(&ptr),
@@ -235,11 +295,20 @@ impl App {
         self.screen = screen;
 
         if self.show_settings {
-            let ptr = if settings_was_open { self.pointer } else { Pointer::default() };
+            let ptr = if settings_was_open && !browser_was_open { self.pointer } else { Pointer::default() };
             self.settings(ptr);
         }
+        if browser_was_open {
+            self.folder_browser(self.pointer);
+        }
         if is_key_pressed(KeyCode::Escape) {
-            if self.show_settings {
+            if self.browser.is_some() {
+                self.browser = None;
+            } else if self.search_focus {
+                self.search_focus = false;
+                self.search.clear();
+                self.scroll = 0.0;
+            } else if self.show_settings {
                 self.show_settings = false;
             } else {
                 action = match &self.screen {
@@ -297,6 +366,7 @@ impl App {
 
     fn apply(&mut self, a: Action) {
         self.audio.all_off();
+        self.search_focus = false;
         match a {
             Action::Home => self.screen = Screen::Dashboard,
             Action::OpenComposition(c) => self.screen = Screen::Difficulty(c),
@@ -348,7 +418,8 @@ impl App {
 
     // ---------------------------------------------------------------- header
 
-    fn midi_pill(&self, rx: f32, cy: f32) {
+    /// Draws the MIDI status pill ending at `rx`; returns its left edge.
+    fn midi_pill(&self, rx: f32, cy: f32) -> f32 {
         let f = &self.fonts;
         let (label, color) = match &self.midi.port_name {
             Some(n) => (n.split(':').next().unwrap_or(n).trim().to_string(), GOOD),
@@ -361,6 +432,7 @@ impl App {
         draw_circle(r.x + 18.0, cy, 6.0, color);
         let size = fit_size(&f.regular, &label, size, w - 40.0);
         text_left(&f.regular, &label, r.x + 32.0, cy, size, TEXT);
+        r.x
     }
 
     // ------------------------------------------------------------- dashboard
@@ -369,29 +441,37 @@ impl App {
         let s = self.s();
         let (w, h) = (vw(), vh());
         let header = 96.0;
+        let bar = Rect::new(0.0, header, w, 64.0);
+        let top = bar.y + bar.h;
         let Some(lib) = &self.lib else { return None };
         let lang = self.lang.code();
+        let visible = lib.visible(self.category.as_deref(), &self.search, lang);
 
+        // ---- pieces: sorted by title, filtered by category and search
         let gap = 28.0;
         let cw = (w - 48.0).min(280.0);
         let ch = cw + 104.0;
         let cols = ((w - 48.0 + gap) / (cw + gap)).floor().max(1.0) as usize;
-        let rows = lib.compositions.len().div_ceil(cols);
+        let rows = visible.len().div_ceil(cols);
         let content_h = rows as f32 * (ch + gap) + 24.0;
-        let max_scroll = (content_h - (h - header)).max(0.0);
-        if ptr.dragging() {
+        let max_scroll = (content_h - (h - top)).max(0.0);
+        if ptr.dragging() && ptr.press_pos.y > top {
             self.scroll -= ptr.delta.y;
         }
-        self.scroll = (self.scroll - wheel_notches() * 60.0).clamp(0.0, max_scroll);
+        if !bar.contains(ptr.pos) {
+            self.scroll -= wheel_notches() * 60.0;
+        }
+        self.scroll = self.scroll.clamp(0.0, max_scroll);
 
         let grid_w = cols as f32 * cw + (cols - 1) as f32 * gap;
         let x0 = (w - grid_w) / 2.0;
-        let y0 = header + 12.0 - self.scroll;
+        let y0 = top + 8.0 - self.scroll;
         let mut action = None;
-        for (i, comp) in lib.compositions.iter().enumerate() {
-            let (col, row) = (i % cols, i / cols);
+        for (k, &i) in visible.iter().enumerate() {
+            let comp = &lib.compositions[i];
+            let (col, row) = (k % cols, k / cols);
             let card = Rect::new(x0 + col as f32 * (cw + gap), y0 + row as f32 * (ch + gap), cw, ch);
-            if card.y > h || card.y + card.h < header {
+            if card.y > h || card.y + card.h < top {
                 continue;
             }
             rounded_rect(card, 18.0, if ptr.pressing(card) { PANEL_HI } else { PANEL });
@@ -418,21 +498,109 @@ impl App {
                     draw_circle_lines(cx, cy, 8.0, 2.0, col);
                 }
             }
-            if ptr.tapped(card) && ptr.pos.y > header {
+            if ptr.tapped(card) && ptr.pos.y > top {
                 action = Some(Action::OpenComposition(i));
             }
         }
-        if lib.compositions.is_empty() {
-            text_center(&self.fonts.regular, s.no_compositions, w / 2.0, h / 2.0, 24.0, MUTED);
+        if visible.is_empty() {
+            let msg = if lib.compositions.is_empty() { s.no_compositions } else { s.no_matches };
+            text_center(&self.fonts.regular, msg, w / 2.0, (top + h) / 2.0, 24.0, MUTED);
+        }
+        draw_rectangle(0.0, 0.0, w, top, BG);
+
+        // ---- category carousel: "All" plus every tag in use; scrolls sideways when too wide
+        let f = &self.fonts;
+        let mut chips: Vec<(Option<String>, String)> = vec![(None, s.all.to_string())];
+        chips.extend(lib.categories().into_iter().map(|id| {
+            let t = lib.tag_title(&id, lang);
+            (Some(id), t)
+        }));
+        let (chip_h, chip_gap, size) = (44.0, 10.0, 18.0);
+        let icon = 22.0;
+        let widths: Vec<f32> = chips.iter().map(|(_, l)| text_width(&f.bold, l, size) + 40.0 + icon + 8.0).collect();
+        let total = widths.iter().sum::<f32>() + chip_gap * (chips.len() - 1) as f32;
+        let (left, view_w) = (24.0, w - 48.0);
+        let max_cat = (total - view_w).max(0.0);
+        if ptr.dragging() && bar.contains(ptr.press_pos) {
+            self.category_scroll -= ptr.delta.x;
+        }
+        if bar.contains(ptr.pos) {
+            let wx = mouse_wheel().0;
+            let wx = if wx.abs() > 2.0 { wx / 10.0 } else { wx };
+            self.category_scroll -= (wheel_notches() + wx) * 60.0;
+        }
+        self.category_scroll = self.category_scroll.clamp(0.0, max_cat);
+        let arrows = (self.category_scroll > 0.5, self.category_scroll < max_cat - 0.5);
+        let cy = bar.y + bar.h / 2.0 - 4.0;
+        let mut x = left - self.category_scroll;
+        let mut picked = None;
+        for ((id, label), cw) in chips.iter().zip(&widths) {
+            let r = Rect::new(x, cy - chip_h / 2.0, *cw, chip_h);
+            x += cw + chip_gap;
+            if r.x + r.w < 0.0 || r.x > w {
+                continue;
+            }
+            let selected = *id == self.category;
+            let bg = if selected { TEXT } else if ptr.pressing(r) { PANEL_HI } else { PANEL };
+            rounded_rect(r, chip_h / 2.0, bg);
+            let fg = if selected { BG } else { TEXT };
+            icon_category(id.as_deref(), vec2(r.x + 20.0 + icon / 2.0, cy), icon, fg, bg);
+            text_left(&f.bold, label, r.x + 20.0 + icon + 8.0, cy, size, fg);
+            let hidden = (arrows.0 && ptr.pos.x < 64.0) || (arrows.1 && ptr.pos.x > w - 64.0);
+            if ptr.tapped(r) && !hidden {
+                // Tapping the selected category again shows all pieces.
+                picked = Some(if selected { None } else { id.clone() });
+            }
+        }
+        // Cover the chips outside the visible strip; arrows where more chips are hidden.
+        draw_rectangle(0.0, bar.y, left, bar.h, BG);
+        draw_rectangle(w - left, bar.y, left, bar.h, BG);
+        for (show, dir) in [(arrows.0, -1.0f32), (arrows.1, 1.0)] {
+            if !show {
+                continue;
+            }
+            let bx = if dir < 0.0 { 0.0 } else { w - 64.0 };
+            draw_rectangle(bx, bar.y, 64.0, bar.h, BG);
+            let r = Rect::new(bx + 10.0, cy - chip_h / 2.0, chip_h, chip_h);
+            if icon_button(ptr, r, PANEL_HI, |c| icon_chevron(c, 20.0, dir, TEXT)) {
+                self.category_scroll = (self.category_scroll + dir * view_w * 0.7).clamp(0.0, max_cat);
+            }
+        }
+        if let Some(c) = picked {
+            self.category = c;
+            self.scroll = 0.0;
         }
 
-        draw_rectangle(0.0, 0.0, w, header, BG);
-        text_left(&self.fonts.bold, s.app_title, 32.0, header / 2.0, 38.0, TEXT);
+        // ---- header: title, search field, MIDI status, settings
+        text_left(&f.bold, s.app_title, 32.0, header / 2.0, 38.0, TEXT);
         let gear = Rect::new(w - 76.0, header / 2.0 - 26.0, 52.0, 52.0);
         if icon_button(ptr, gear, PANEL, |c| icon_gear(c, 40.0, TEXT, PANEL)) {
             self.show_settings = true;
         }
-        self.midi_pill(gear.x - 14.0, header / 2.0);
+        let pill_x = self.midi_pill(gear.x - 14.0, header / 2.0);
+        let field_left = 32.0 + text_width(&f.bold, s.app_title, 38.0) + 32.0;
+        let field_right = pill_x - 16.0;
+        let field_h = 48.0;
+        let changed = if field_right - field_left >= 200.0 {
+            let fw = (field_right - field_left).min(420.0);
+            let r = Rect::new(field_left, header / 2.0 - field_h / 2.0, fw, field_h);
+            text_field(f, ptr, r, &mut self.search, &mut self.search_focus, s.search)
+        } else if self.search_focus || !self.search.is_empty() {
+            // Narrow window: the field covers the title while it is in use.
+            let r = Rect::new(24.0, header / 2.0 - field_h / 2.0, field_right - 24.0, field_h);
+            draw_rectangle(0.0, 0.0, field_right, header, BG);
+            text_field(f, ptr, r, &mut self.search, &mut self.search_focus, s.search)
+        } else {
+            while get_char_pressed().is_some() {}
+            let r = Rect::new(field_right - field_h, header / 2.0 - field_h / 2.0, field_h, field_h);
+            if icon_button(ptr, r, PANEL, |c| icon_search(c, 26.0, TEXT)) {
+                self.search_focus = true;
+            }
+            false
+        };
+        if changed {
+            self.scroll = 0.0;
+        }
         action
     }
 
@@ -1034,7 +1202,7 @@ impl App {
         let (w, h) = (vw(), vh());
         draw_rectangle(0.0, 0.0, w, h, alpha(BLACK, 0.6));
         let pw = 620.0f32.min(w - 32.0);
-        let ph = 530.0f32.min(h - 32.0);
+        let ph = 650.0f32.min(h - 32.0);
         let panel = Rect::new((w - pw) / 2.0, (h - ph) / 2.0, pw, ph);
         rounded_rect(panel, 22.0, PANEL);
         let f = &self.fonts;
@@ -1079,6 +1247,20 @@ impl App {
             self.progress.settings.keyboard = sizes[i];
             changed = true;
         }
+        // Library folder: the current one (or "searched automatically") and a button to change it.
+        let ly = row(5) - 6.0;
+        text_left(&f.regular, s.library, panel.x + 32.0, ly, 20.0, TEXT);
+        let change = Rect::new(panel.x + pw - 24.0 - 180.0, ly - 26.0, 180.0, 52.0);
+        let current = match (&self.progress.settings.library, &self.lib) {
+            (Some(p), _) => display_path(p),
+            (None, Some(l)) => format!("{} ({})", display_path(&l.root), s.library_auto),
+            (None, None) => s.library_auto.to_string(),
+        };
+        let cs = fit_size(&f.regular, &current, 16.0, pw - 64.0);
+        text_left(&f.regular, &current, panel.x + 32.0, ly + 40.0, cs, MUTED);
+        if button(f, &ptr, change, s.change, PANEL_HI, TEXT, 18.0) {
+            self.browser = Some(Browser::open(self.browser_start()));
+        }
         let close = Rect::new(panel.x + pw - 24.0 - 180.0, panel.y + ph - 84.0, 180.0, 60.0);
         if button(f, &ptr, close, s.close, PANEL_HI, TEXT, 20.0) || (ptr.released && !panel.contains(ptr.pos) && !panel.contains(ptr.press_pos)) {
             self.show_settings = false;
@@ -1088,7 +1270,7 @@ impl App {
         }
     }
 
-    fn error(&self, e: &str, ptr: &Pointer) -> Option<Action> {
+    fn error(&mut self, e: &str, ptr: &Pointer) -> Option<Action> {
         let (w, h) = (vw(), vh());
         let f = &self.fonts;
         let fs = fit_size(&f.regular, e, 20.0, w - 40.0);
@@ -1098,7 +1280,141 @@ impl App {
             if button(f, ptr, r, self.s().back, PANEL_HI, TEXT, 20.0) {
                 return Some(Action::Home);
             }
+        } else {
+            let bw = 360.0f32.min(w - 32.0);
+            let r = Rect::new(w / 2.0 - bw / 2.0, h / 2.0 + 20.0, bw, 60.0);
+            if button(f, ptr, r, self.s().choose_folder, GOOD, BG, 20.0) {
+                self.browser = Some(Browser::open(self.browser_start()));
+            }
         }
         None
+    }
+
+    // ---------------------------------------------------------- folder picker
+
+    /// Where the picker opens: the current library, the chosen folder or the home folder.
+    fn browser_start(&self) -> std::path::PathBuf {
+        let existing = |p: &std::path::Path| p.is_dir().then(|| p.to_path_buf());
+        self.lib
+            .as_ref()
+            .and_then(|l| existing(&l.root))
+            .or_else(|| self.progress.settings.library.as_deref().and_then(existing))
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| "/".into())
+    }
+
+    /// Uses `dir` (or `None` = search automatically) as library and goes to the dashboard.
+    fn set_library(&mut self, dir: Option<std::path::PathBuf>) {
+        self.progress.settings.library = dir.clone();
+        self.progress.save();
+        let root = library::find_root(dir.as_deref());
+        (self.lib, self.thumbs, self.screen) = load_library(root, self.s());
+        self.scroll = 0.0;
+        self.browser = None;
+        self.show_settings = false;
+    }
+
+    fn folder_browser(&mut self, ptr: Pointer) {
+        let s = self.s();
+        let (w, h) = (vw(), vh());
+        draw_rectangle(0.0, 0.0, w, h, alpha(BLACK, 0.6));
+        let pw = 760.0f32.min(w - 32.0);
+        let ph = 680.0f32.min(h - 32.0);
+        let panel = Rect::new((w - pw) / 2.0, (h - ph) / 2.0, pw, ph);
+        let Some(b) = self.browser.as_mut() else { return };
+        let f = &self.fonts;
+
+        // Folder list between the header (title + path) and the footer (status + buttons).
+        let list = Rect::new(panel.x + 16.0, panel.y + 110.0, pw - 32.0, ph - 110.0 - 150.0);
+        let row_h = 56.0;
+        let parent = b.dir.parent().map(|p| p.to_path_buf());
+        let n = b.entries.len() + parent.is_some() as usize;
+        let max_scroll = (n as f32 * row_h - list.h).max(0.0);
+        if ptr.dragging() && list.contains(ptr.press_pos) {
+            b.scroll -= ptr.delta.y;
+        }
+        if list.contains(ptr.pos) {
+            b.scroll -= wheel_notches() * 60.0;
+        }
+        b.scroll = b.scroll.clamp(0.0, max_scroll);
+
+        rounded_rect(panel, 22.0, PANEL);
+        let mut go = None;
+        let rows = parent.iter().map(|p| ("..".to_string(), p.clone(), false)).chain(b.entries.iter().cloned());
+        for (i, (name, path, is_lib)) in rows.enumerate() {
+            let r = Rect::new(list.x, list.y + i as f32 * row_h - b.scroll, list.w, row_h - 4.0);
+            if r.y + r.h < list.y || r.y > list.y + list.h {
+                continue;
+            }
+            if ptr.pressing(r) {
+                rounded_rect(r, 10.0, PANEL_HI);
+            }
+            let cy = r.y + r.h / 2.0;
+            // Folder icon: body plus tab.
+            let col = if is_lib { GOOD } else { MUTED };
+            rounded_rect(Rect::new(r.x + 16.0, cy - 9.0, 30.0, 21.0), 3.0, col);
+            rounded_rect(Rect::new(r.x + 16.0, cy - 13.0, 13.0, 8.0), 2.0, col);
+            let label = if name == ".." { format!("↑  {name}") } else { name };
+            let font = if is_lib { &f.bold } else { &f.regular };
+            let ls = fit_size(font, &label, 20.0, r.w - 80.0);
+            text_left(font, &label, r.x + 62.0, cy, ls, TEXT);
+            if ptr.tapped(r) && list.contains(ptr.pos) {
+                go = Some(path);
+            }
+        }
+        if b.entries.is_empty() && parent.is_none() {
+            text_center(&f.regular, "–", list.center().x, list.y + 40.0, 20.0, MUTED);
+        }
+        // Cover the rows that scrolled out of the list.
+        draw_rectangle(panel.x, panel.y + 20.0, pw, list.y - panel.y - 20.0, PANEL);
+        rounded_rect(Rect::new(panel.x, panel.y, pw, 40.0), 22.0, PANEL);
+        draw_rectangle(panel.x, list.y + list.h, pw, panel.y + ph - 20.0 - list.y - list.h, PANEL);
+        rounded_rect(Rect::new(panel.x, panel.y + ph - 40.0, pw, 40.0), 22.0, PANEL);
+
+        let ts = fit_size(&f.bold, s.choose_folder, 28.0, pw - 64.0);
+        text_left(&f.bold, s.choose_folder, panel.x + 32.0, panel.y + 44.0, ts, TEXT);
+        let shown = display_path(&b.dir);
+        let ps = fit_size(&f.regular, &shown, 18.0, pw - 64.0);
+        text_left(&f.regular, &shown, panel.x + 32.0, panel.y + 84.0, ps, MUTED);
+
+        let found = library::resolve(&b.dir);
+        let (msg, col) = if found.is_some() { (s.library_here, GOOD) } else { (s.no_library_here, MUTED) };
+        let ms = fit_size(&f.regular, msg, 18.0, pw - 64.0);
+        text_left(&f.regular, msg, panel.x + 32.0, panel.y + ph - 120.0, ms, col);
+
+        let by = panel.y + ph - 84.0;
+        let bw = ((pw - 48.0 - 32.0) / 3.0).min(200.0);
+        let auto = Rect::new(panel.x + 24.0, by, bw, 60.0);
+        let cancel = Rect::new(panel.x + pw - 24.0 - 2.0 * bw - 16.0, by, bw, 60.0);
+        let use_it = Rect::new(panel.x + pw - 24.0 - bw, by, bw, 60.0);
+        let mut close = false;
+        let mut choose = None;
+        if button(f, &ptr, auto, s.default_folder, PANEL_HI, TEXT, 18.0) {
+            choose = Some(None);
+        }
+        if button(f, &ptr, cancel, s.cancel, PANEL_HI, TEXT, 18.0) {
+            close = true;
+        }
+        match &found {
+            Some(root) => {
+                if button(f, &ptr, use_it, s.use_folder, GOOD, BG, 20.0) {
+                    choose = Some(Some(root.clone()));
+                }
+            }
+            None => {
+                rounded_rect(use_it, 14.0, PANEL_HI);
+                let us = fit_size(&f.bold, s.use_folder, 20.0, bw - 16.0);
+                text_center(&f.bold, s.use_folder, use_it.center().x, use_it.center().y, us, MUTED);
+            }
+        }
+        if let Some(p) = go {
+            b.go(p);
+        }
+        if close {
+            self.browser = None;
+        }
+        if let Some(dir) = choose {
+            self.set_library(dir);
+        }
     }
 }

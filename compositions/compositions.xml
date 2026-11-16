@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   List of all compositions in the library.
-  path and thumbnail src are relative to the compositions/ folder.
-  The difficulty levels are the subfolders of each composition folder
-  (e.g. compositions/oh-christmas-tree/beginner).
+  The folder containing this file is the library; path and thumbnail src are
+  relative to it. The difficulty levels are the subfolders of each composition
+  folder (e.g. oh-christmas-tree/beginner).
 -->
 <library format-version="1">
 
@@ -36,6 +36,30 @@
   </difficulty>
 </difficulties>
 
+<!-- Categories shown above the pieces. A composition uses them with <tag>id</tag>;
+     tags not listed here are shown with their id. -->
+<tags>
+  <tag id="children">
+    <title xml:lang="de">Kinderlieder</title>
+    <title xml:lang="en">Children's songs</title>
+  </tag>
+
+  <tag id="classical">
+    <title xml:lang="de">Klassik</title>
+    <title xml:lang="en">Classical</title>
+  </tag>
+
+  <tag id="christmas">
+    <title xml:lang="de">Weihnachten</title>
+    <title xml:lang="en">Christmas</title>
+  </tag>
+
+  <tag id="birthday">
+    <title xml:lang="de">Geburtstag</title>
+    <title xml:lang="en">Birthday</title>
+  </tag>
+</tags>
+
 <compositions>
 
   <composition id="oh-christmas-tree" path="oh-christmas-tree">
@@ -65,6 +89,36 @@
     <thumbnail src="happy-birthday/thumbnail.png"/>
     <tags>
       <tag>birthday</tag>
+    </tags>
+  </composition>
+
+  <composition id="fuer-elise" path="fuer-elise">
+    <title xml:lang="de">Für Elise</title>
+    <title xml:lang="en">Für Elise</title>
+    <composer>Ludwig van Beethoven</composer>
+    <thumbnail src="fuer-elise/thumbnail.png"/>
+    <tags>
+      <tag>classical</tag>
+    </tags>
+  </composition>
+
+  <composition id="ode-to-joy" path="ode-to-joy">
+    <title xml:lang="de">Ode an die Freude</title>
+    <title xml:lang="en">Ode to Joy</title>
+    <composer>Ludwig van Beethoven</composer>
+    <thumbnail src="ode-to-joy/thumbnail.png"/>
+    <tags>
+      <tag>classical</tag>
+    </tags>
+  </composition>
+
+  <composition id="all-my-little-ducklings" path="all-my-little-ducklings">
+    <title xml:lang="de">Alle meine Entchen</title>
+    <title xml:lang="en">All My Little Ducklings</title>
+    <composer>Ernst Anschütz</composer>
+    <thumbnail src="all-my-little-ducklings/thumbnail.png"/>
+    <tags>
+      <tag>children</tag>
     </tags>
   </composition>
 

@@ -424,6 +424,48 @@ mod tests {
     }
 
     #[test]
+    fn parses_fuer_elise_beginner() {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/fuer-elise/beginner/full.musicxml");
+        let s = load(&p).unwrap();
+        // 21 bars of 3/4 at ♩ = 72, starting with E5–D#5 after a half rest.
+        assert_eq!(s.measures.len(), 21);
+        assert!((s.duration - 63.0 * 60.0 / 72.0).abs() < 1e-6);
+        assert_eq!((s.notes[0].pitch, s.notes[1].pitch), (76, 75));
+        assert_eq!(s.notes.iter().map(|n| n.pitch).min(), Some(45)); // A2
+        assert!(s.notes.iter().all(|n| n.finger.is_some()));
+    }
+
+    #[test]
+    fn parses_ode_to_joy_beginner() {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/ode-to-joy/beginner/full.musicxml");
+        let s = load(&p).unwrap();
+        // 16 bars of 4/4 at ♩ = 96; melody E E F G over a C chord (C3 E3 G3).
+        assert_eq!(s.measures.len(), 16);
+        assert!((s.duration - 64.0 * 60.0 / 96.0).abs() < 1e-6);
+        let first: Vec<u8> = s.notes.iter().filter(|n| n.start < 1e-6).map(|n| n.pitch).collect();
+        assert_eq!(first.len(), 4);
+        assert!(first.contains(&64) && first.contains(&48));
+        assert_eq!(s.notes.iter().map(|n| n.pitch).min(), Some(47)); // B2
+        assert!(s.notes.iter().all(|n| n.finger.is_some()));
+    }
+
+    #[test]
+    fn parses_all_my_little_ducklings_levels() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/all-my-little-ducklings");
+        // Same melody (C D E F G G A A A A G …) in all three levels, only the left hand differs.
+        for (level, lh_notes) in [("prep", 9), ("beginner", 13), ("intermediate", 15)] {
+            let s = load(&dir.join(level).join("full.musicxml")).unwrap();
+            assert_eq!(s.measures.len(), 10, "{level}");
+            assert!((s.duration - 40.0 * 60.0 / 100.0).abs() < 1e-6, "{level}");
+            let rh: Vec<u8> = s.notes.iter().filter(|n| n.staff == 1).map(|n| n.pitch).collect();
+            assert_eq!(rh.len(), 27, "{level}");
+            assert_eq!(rh[..7], [60, 62, 64, 65, 67, 67, 69], "{level}");
+            assert_eq!(s.notes.iter().filter(|n| n.staff == 2).count(), lh_notes, "{level}");
+            assert!(s.notes.iter().all(|n| n.finger.is_some()), "{level}");
+        }
+    }
+
+    #[test]
     fn parses_duet_parts_and_voltas() {
         let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/happy-birthday/duet/full.musicxml");
         let s = load(&p).unwrap();

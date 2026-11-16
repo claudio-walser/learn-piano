@@ -25,6 +25,8 @@ pub struct Settings {
     pub keyboard: KeyboardSize,
     /// Start the lesson again automatically when it ends.
     pub repeat: bool,
+    /// Library folder chosen in the settings; `None` = search automatically.
+    pub library: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -39,6 +41,7 @@ impl Default for Settings {
             tempo: 1.0,
             keyboard: KeyboardSize::Auto,
             repeat: false,
+            library: None,
         }
     }
 }

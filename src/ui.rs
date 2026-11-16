@@ -447,3 +447,166 @@ pub fn segmented(f: &Fonts, p: &Pointer, r: Rect, labels: &[&str], selected: usi
     }
     out
 }
+
+/// Magnifying glass.
+pub fn icon_search(c: Vec2, size: f32, color: Color) {
+    let r = size * 0.28;
+    let o = vec2(c.x - size * 0.08, c.y - size * 0.08);
+    draw_circle_lines(o.x, o.y, r, size * 0.09, color);
+    let d = r * std::f32::consts::FRAC_1_SQRT_2;
+    draw_line(o.x + d, o.y + d, c.x + size * 0.36, c.y + size * 0.36, size * 0.11, color);
+}
+
+/// Chevron pointing left (`dir` = -1) or right (`dir` = 1).
+pub fn icon_chevron(c: Vec2, size: f32, dir: f32, color: Color) {
+    let s = size * 0.5;
+    draw_line(c.x - s * 0.3 * dir, c.y - s, c.x + s * 0.4 * dir, c.y, 3.5, color);
+    draw_line(c.x + s * 0.4 * dir, c.y, c.x - s * 0.3 * dir, c.y + s, 3.5, color);
+}
+
+/// Single-line text input. Tapping it focuses it, tapping elsewhere removes the focus;
+/// typing, Backspace and the × button edit `text`. Returns true when `text` changed.
+pub fn text_field(f: &Fonts, p: &Pointer, r: Rect, text: &mut String, focused: &mut bool, placeholder: &str) -> bool {
+    let before = text.clone();
+    let clear = Rect::new(r.x + r.w - r.h, r.y, r.h, r.h);
+    if p.tapped(clear) && !text.is_empty() {
+        text.clear();
+        *focused = true;
+    } else if p.tapped(r) {
+        *focused = true;
+    } else if p.released && !r.contains(p.press_pos) {
+        *focused = false;
+    }
+    // Always drain the queue so keys typed before focusing don't show up later.
+    while let Some(c) = get_char_pressed() {
+        if *focused && !c.is_control() {
+            text.push(c);
+        }
+    }
+    if *focused && is_key_pressed(KeyCode::Backspace) {
+        text.pop();
+    }
+    if *focused && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter)) {
+        *focused = false;
+    }
+
+    rounded_rect(r, r.h * 0.5, if *focused { PANEL_HI } else { PANEL });
+    if *focused {
+        draw_rectangle_lines_rounded(r, TEXT);
+    }
+    let cy = r.y + r.h / 2.0;
+    icon_search(vec2(r.x + r.h * 0.55, cy), r.h * 0.5, MUTED);
+    let x = r.x + r.h;
+    let max_w = r.w - r.h - if text.is_empty() { 12.0 } else { r.h };
+    let size = 19.0;
+    if text.is_empty() && !*focused {
+        let s = fit_size(&f.regular, placeholder, size, max_w);
+        text_left(&f.regular, placeholder, x, cy, s, MUTED);
+    } else {
+        // Show the end of the text when it is too long.
+        let mut shown: &str = text;
+        while text_width(&f.regular, shown, size) > max_w - 4.0 && !shown.is_empty() {
+            let mut it = shown.chars();
+            it.next();
+            shown = it.as_str();
+        }
+        text_left(&f.regular, shown, x, cy, size, TEXT);
+        if *focused && (get_time() * 2.0) as i64 % 2 == 0 {
+            let cx = x + text_width(&f.regular, shown, size) + 2.0;
+            draw_line(cx, cy - 11.0, cx, cy + 11.0, 2.0, TEXT);
+        }
+    }
+    if !text.is_empty() {
+        let c = clear.center();
+        let s = r.h * 0.16;
+        draw_line(c.x - s, c.y - s, c.x + s, c.y + s, 2.5, MUTED);
+        draw_line(c.x - s, c.y + s, c.x + s, c.y - s, 2.5, MUTED);
+    }
+    *text != before
+}
+
+/// Thin outline of a pill-shaped rect (focus ring).
+fn draw_rectangle_lines_rounded(r: Rect, c: Color) {
+    let rad = r.h * 0.5;
+    draw_line(r.x + rad, r.y, r.x + r.w - rad, r.y, 2.0, c);
+    draw_line(r.x + rad, r.y + r.h, r.x + r.w - rad, r.y + r.h, 2.0, c);
+    for (cx, a0) in [(r.x + rad, 90.0f32), (r.x + r.w - rad, -90.0)] {
+        for i in 0..16 {
+            let a = (a0 + i as f32 * 180.0 / 16.0).to_radians();
+            let b = (a0 + (i + 1) as f32 * 180.0 / 16.0).to_radians();
+            let cy = r.y + rad;
+            draw_line(cx + a.cos() * rad, cy - a.sin() * rad, cx + b.cos() * rad, cy - b.sin() * rad, 2.0, c);
+        }
+    }
+}
+
+/// Small symbol for a category chip: `None` = all pieces, otherwise the tag id.
+/// Unknown tags get a music note.
+pub fn icon_category(tag: Option<&str>, c: Vec2, size: f32, color: Color, bg: Color) {
+    let s = size / 2.0;
+    let (x, y) = (c.x, c.y);
+    match tag {
+        // Four tiles.
+        None => {
+            let t = s * 0.82;
+            for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                let r = Rect::new(x + dx * s * 0.5 - t / 2.0, y + dy * s * 0.5 - t / 2.0, t, t);
+                rounded_rect(r, t * 0.25, color);
+            }
+        }
+        // Fir tree with a star.
+        Some("christmas") => {
+            for (top, bottom, half) in [(-0.62, -0.05, 0.42), (-0.32, 0.32, 0.6), (-0.02, 0.7, 0.8)] {
+                draw_triangle(vec2(x, y + s * top), vec2(x - s * half, y + s * bottom), vec2(x + s * half, y + s * bottom), color);
+            }
+            draw_rectangle(x - s * 0.14, y + s * 0.7, s * 0.28, s * 0.3, color);
+            draw_poly(x, y - s * 0.8, 5, s * 0.2, -90.0, color);
+        }
+        // Cake with a candle.
+        Some("birthday") => {
+            rounded_rect(Rect::new(x - s * 0.9, y + s * 0.3, s * 1.8, s * 0.65), s * 0.12, color);
+            rounded_rect(Rect::new(x - s * 0.68, y - s * 0.2, s * 1.36, s * 0.55), s * 0.12, color);
+            draw_rectangle(x - s * 0.08, y - s * 0.62, s * 0.16, s * 0.42, color);
+            draw_circle(x, y - s * 0.78, s * 0.13, color);
+            draw_triangle(vec2(x - s * 0.13, y - s * 0.76), vec2(x + s * 0.13, y - s * 0.76), vec2(x, y - s * 1.0), color);
+        }
+        // Lyre: two curved arms, crossbar, strings, base.
+        Some("classical") => {
+            let w = s * 0.14;
+            let arm = |dir: f32| {
+                let pts: Vec<Vec2> = (0..=8)
+                    .map(|i| {
+                        let t = i as f32 / 8.0;
+                        let bulge = (t * std::f32::consts::PI).sin();
+                        vec2(x + dir * s * (0.35 + 0.45 * bulge + 0.1 * t), y + s * (0.75 - 1.5 * t))
+                    })
+                    .collect();
+                for p in pts.windows(2) {
+                    draw_line(p[0].x, p[0].y, p[1].x, p[1].y, w, color);
+                    draw_circle(p[1].x, p[1].y, w / 2.0, color);
+                }
+            };
+            arm(-1.0);
+            arm(1.0);
+            draw_line(x - s * 0.5, y - s * 0.5, x + s * 0.5, y - s * 0.5, w, color);
+            for dx in [-0.2, 0.0, 0.2] {
+                draw_line(x + dx * s, y - s * 0.5, x + dx * s, y + s * 0.7, w * 0.45, color);
+            }
+            rounded_rect(Rect::new(x - s * 0.5, y + s * 0.65, s, s * 0.28), s * 0.1, color);
+        }
+        // Little duck.
+        Some("children") => {
+            draw_ellipse(x - s * 0.1, y + s * 0.4, s * 0.75, s * 0.45, 0.0, color);
+            draw_triangle(vec2(x - s * 0.95, y - s * 0.1), vec2(x - s * 0.85, y + s * 0.5), vec2(x - s * 0.4, y + s * 0.2), color);
+            draw_circle(x + s * 0.4, y - s * 0.35, s * 0.38, color);
+            draw_triangle(vec2(x + s * 0.7, y - s * 0.45), vec2(x + s * 0.7, y - s * 0.2), vec2(x + s * 1.0, y - s * 0.32), color);
+            draw_circle(x + s * 0.48, y - s * 0.45, s * 0.08, bg);
+        }
+        // Eighth note.
+        Some(_) => {
+            draw_ellipse(x - s * 0.25, y + s * 0.55, s * 0.32, s * 0.24, -20.0, color);
+            draw_line(x + s * 0.05, y + s * 0.5, x + s * 0.05, y - s * 0.85, s * 0.13, color);
+            draw_triangle(vec2(x + s * 0.05, y - s * 0.85), vec2(x + s * 0.05, y - s * 0.4), vec2(x + s * 0.55, y - s * 0.2), color);
+        }
+    }
+}

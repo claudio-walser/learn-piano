@@ -18,15 +18,21 @@ und läuft direkt auf dem Host.
 ## Starten
 
 ```sh
-./target/release/learn-piano                 # sucht compositions.xml im aktuellen Ordner
-./target/release/learn-piano --library DIR   # oder in DIR
+./target/release/learn-piano                 # sucht die Bibliothek (siehe unten)
+./target/release/learn-piano --library DIR   # Bibliothek in DIR
 ./target/release/learn-piano --fullscreen
 ./target/release/learn-piano --x11          # X11/XWayland erzwingen (Standard: Wayland, falls die Sitzung Wayland ist)
 ./target/release/learn-piano --debug        # FPS und Eingaben anzeigen, Log in ~/.local/share/learn-piano/debug.log
 ```
 
-Ohne `--library` wird außerdem `$LEARN_PIANO_LIBRARY` und der Ordner des Binaries
-(samt übergeordneten Ordnern) durchsucht.
+Die Bibliothek ist der Ordner mit der `compositions.xml`. Gesucht wird in dieser Reihenfolge:
+`--library DIR`, `$LEARN_PIANO_LIBRARY`, der in den Einstellungen gewählte Ordner, dann der
+aktuelle Ordner und der Ordner des Binaries (samt übergeordneten Ordnern). Jeweils zählt der
+Ordner selbst oder sein Unterordner `compositions/`, deshalb funktioniert auch der Projektordner.
+
+In den Einstellungen lässt sich der Ordner unter „Ordner mit den Stücken“ wählen
+(„Automatisch“ setzt die Wahl zurück). Findet die App keine Bibliothek, bietet sie die
+Ordnerauswahl direkt an.
 
 In einer Wayland-Sitzung läuft die App nativ unter Wayland, sonst unter X11.
 Unter XWayland funktioniert Touch nicht (es kommt nie ein Loslassen an); mit `--x11`
@@ -38,17 +44,20 @@ Ohne Keyboard kann man die Tasten auf dem Bildschirm antippen.
 ## Bibliothek
 
 ```
-compositions.xml              Liste der Stücke und Schwierigkeitsstufen
 sound-fonts/default.sf2       Klang
-compositions/<stück>/
-  thumbnail.png
-  <schwierigkeit>/            z.B. prep, beginner, duet – muss in compositions.xml definiert sein
-    01-part-A.musicxml        Lektionen (optional), in Namensreihenfolge
-    02-part-B.musicxml
-    full.musicxml             ganzes Stück (Pflicht)
+compositions/                 die Bibliothek
+  compositions.xml            Liste der Stücke und Schwierigkeitsstufen
+  <stück>/
+    thumbnail.png
+    <schwierigkeit>/          z.B. prep, beginner, duet – muss in compositions.xml definiert sein
+      01-part-A.musicxml      Lektionen (optional), in Namensreihenfolge
+      02-part-B.musicxml
+      full.musicxml           ganzes Stück (Pflicht)
 ```
 
-`path` und `thumbnail src` in `compositions.xml` sind relativ zum Ordner `compositions/`.
+`path` und `thumbnail src` in `compositions.xml` sind relativ zum Ordner der `compositions.xml`.
+Der Klang `sound-fonts/default.sf2` wird neben der Bibliothek, in ihrem übergeordneten Ordner,
+im aktuellen Ordner oder beim Binary gesucht.
 Notenzeile 1 ist die rechte Hand, Notenzeile 2 die linke. Fingersätze werden aus
 `<fingering>` gelesen.
 
@@ -56,7 +65,15 @@ Notenzeile 1 ist die rechte Hand, Notenzeile 2 die linke. Fingersätze werden au
 sondern ein Duett. Sie wird in der Auswahl abgesetzt angezeigt. Die MusicXML enthält zwei
 `<part>`s: den ersten für den Schüler, den zweiten für den Lehrer.
 
+**Kategorien:** Die Tags der Stücke (`<tag>christmas</tag>`) erscheinen als Kategorien über
+der Liste. Ihre Namen stehen im Block `<tags>` in `compositions.xml`; Tags ohne Eintrag dort
+werden mit ihrer ID angezeigt.
+
 ## Bedienung
+
+- **Übersicht:** Die Stücke sind alphabetisch sortiert. Das Suchfeld neben dem Titel durchsucht
+  Titel (alle Sprachen), Komponist und Kategorien; die Kategorien darunter filtern ebenfalls.
+  Die Kategorienleiste lässt sich wischen, mit dem Mausrad oder den Pfeilen verschieben.
 
 - **Warten** (Standard): Der Wasserfall hält an, bis die richtigen Tasten gedrückt sind.
 - **Echtzeit**: Die Noten laufen im Tempo durch; Treffer und Timing werden bewertet.

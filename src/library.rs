@@ -27,6 +27,12 @@ pub struct DifficultyDef {
     pub duet: bool,
 }
 
+/// A category (`<tags><tag id="…">` in compositions.xml).
+pub struct TagDef {
+    pub id: String,
+    pub title: Localized,
+}
+
 pub struct Lesson {
     pub path: PathBuf,
     /// File name without extension, e.g. `01-part-A` or `full`.
@@ -50,7 +56,6 @@ pub struct Composition {
     pub title: Localized,
     pub composer: Option<String>,
     pub thumbnail: Option<PathBuf>,
-    #[allow(dead_code)]
     pub tags: Vec<String>,
     pub levels: Vec<Level>,
 }
@@ -58,30 +63,87 @@ pub struct Composition {
 pub struct Library {
     pub root: PathBuf,
     pub difficulties: Vec<DifficultyDef>,
+    pub tags: Vec<TagDef>,
     pub compositions: Vec<Composition>,
 }
 
-/// Finds the folder containing `compositions.xml`:
-/// `--library <dir>`, `$LEARN_PIANO_LIBRARY`, the working directory,
-/// or the executable's folder and its parents.
-pub fn find_root() -> Option<PathBuf> {
-    let has_lib = |p: &Path| p.join("compositions.xml").is_file();
+/// Lower case without accents, for search and sorting ("Für" matches "fur").
+pub fn fold(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars().flat_map(char::to_lowercase) {
+        match c {
+            'ä' | 'à' | 'á' | 'â' | 'å' => out.push('a'),
+            'ö' | 'ò' | 'ó' | 'ô' => out.push('o'),
+            'ü' | 'ù' | 'ú' | 'û' => out.push('u'),
+            'é' | 'è' | 'ê' | 'ë' => out.push('e'),
+            'ï' | 'î' | 'í' | 'ì' => out.push('i'),
+            'ç' => out.push('c'),
+            'ñ' => out.push('n'),
+            'ß' => out.push_str("ss"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The library folder for `dir`: `dir` itself when it contains `compositions.xml`,
+/// or its `compositions/` subfolder when that one does (e.g. the project folder).
+pub fn resolve(dir: &Path) -> Option<PathBuf> {
+    [dir.to_path_buf(), dir.join("compositions")]
+        .into_iter()
+        .find(|d| d.join("compositions.xml").is_file())
+}
+
+/// Finds the library folder: `--library <dir>`, `$LEARN_PIANO_LIBRARY`, the folder chosen
+/// in the settings, then the working directory and the executable's folder and its parents.
+/// Returns the path that was tried when an explicit choice does not contain a library.
+pub fn find_root(chosen: Option<&Path>) -> Result<PathBuf, Option<PathBuf>> {
     let args: Vec<String> = std::env::args().collect();
-    if let Some(i) = args.iter().position(|a| a == "--library") {
-        if let Some(p) = args.get(i + 1) {
-            return Some(PathBuf::from(p));
-        }
+    let explicit = args
+        .iter()
+        .position(|a| a == "--library")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("LEARN_PIANO_LIBRARY").map(PathBuf::from))
+        .or_else(|| chosen.map(Path::to_path_buf));
+    if let Some(dir) = explicit {
+        return resolve(&dir).ok_or(Some(dir));
     }
-    if let Ok(p) = std::env::var("LEARN_PIANO_LIBRARY") {
-        return Some(PathBuf::from(p));
+    search_dirs().iter().find_map(|d| resolve(d)).ok_or(None)
+}
+
+/// The working directory, then the executable's folder and its parents.
+fn search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::env::current_dir().into_iter().collect();
+    if let Ok(exe) = std::env::current_exe() {
+        dirs.extend(exe.ancestors().skip(1).map(Path::to_path_buf));
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        if has_lib(&cwd) {
-            return Some(cwd);
-        }
-    }
-    let exe = std::env::current_exe().ok()?;
-    exe.ancestors().skip(1).find(|p| has_lib(p)).map(Path::to_path_buf)
+    dirs
+}
+
+/// `sound-fonts/default.sf2` next to the library, in its parent folder, in the working
+/// directory or next to the executable (or one of its parents).
+pub fn find_soundfont(library: Option<&Path>) -> Option<PathBuf> {
+    let near_lib = library.into_iter().flat_map(|l| [Some(l.to_path_buf()), l.parent().map(Path::to_path_buf)]).flatten();
+    near_lib
+        .chain(search_dirs())
+        .map(|d| d.join("sound-fonts").join("default.sf2"))
+        .find(|p| p.is_file())
+}
+
+/// Visible subfolders of `dir`, sorted by name (for the folder picker).
+pub fn subfolders(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut v: Vec<(String, PathBuf)> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .map(|e| (e.file_name().to_string_lossy().to_string(), e.path()))
+                .filter(|(n, _)| !n.starts_with('.'))
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort_by_key(|(n, _)| n.to_lowercase());
+    v
 }
 
 fn localized(node: roxmltree::Node, tag: &str) -> Localized {
@@ -117,8 +179,15 @@ impl Library {
             })
             .collect();
 
-        // Paths are relative to the `compositions/` folder (or to the XML file if it has none).
-        let base = Some(root.join("compositions")).filter(|p| p.is_dir()).unwrap_or_else(|| root.to_path_buf());
+        let tags: Vec<TagDef> = top
+            .children()
+            .filter(|n| n.has_tag_name("tags"))
+            .flat_map(|n| n.children().filter(|c| c.has_tag_name("tag")))
+            .filter_map(|n| Some(TagDef { id: n.attribute("id")?.to_string(), title: localized(n, "title") }))
+            .collect();
+
+        // Paths are relative to the folder of compositions.xml.
+        let base = root;
         let mut compositions = Vec::new();
         for n in top.descendants().filter(|n| n.has_tag_name("composition")) {
             let Some(id) = n.attribute("id") else { continue };
@@ -154,7 +223,63 @@ impl Library {
             });
         }
 
-        Ok(Library { root: root.to_path_buf(), difficulties, compositions })
+        Ok(Library { root: root.to_path_buf(), difficulties, tags, compositions })
+    }
+
+    pub fn tag_title(&self, id: &str, lang: &str) -> String {
+        match self.tags.iter().find(|t| t.id == id) {
+            Some(t) => t.title.get(lang).to_string(),
+            None => {
+                let mut c = id.chars();
+                c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+            }
+        }
+    }
+
+    /// Tags used by at least one composition: defined ones in definition order, then the rest by name.
+    pub fn categories(&self) -> Vec<String> {
+        let used = |id: &str| self.compositions.iter().any(|c| c.tags.iter().any(|t| t == id));
+        let mut out: Vec<String> = self.tags.iter().map(|t| t.id.clone()).filter(|id| used(id)).collect();
+        let mut rest: Vec<String> = self
+            .compositions
+            .iter()
+            .flat_map(|c| c.tags.iter().cloned())
+            .filter(|t| !self.tags.iter().any(|d| &d.id == t))
+            .collect();
+        rest.sort();
+        rest.dedup();
+        out.extend(rest);
+        out
+    }
+
+    /// Indices of the compositions with tag `tag` (all for `None`) matching `query`
+    /// (in any title language, the composer or a category name), sorted by title.
+    pub fn visible(&self, tag: Option<&str>, query: &str, lang: &str) -> Vec<usize> {
+        let words: Vec<String> = fold(query).split_whitespace().map(str::to_string).collect();
+        let mut v: Vec<(String, usize)> = self
+            .compositions
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| tag.is_none_or(|t| c.tags.iter().any(|x| x == t)))
+            .filter(|(_, c)| {
+                let mut hay: Vec<&str> = c.title.0.iter().map(|(_, t)| t.as_str()).collect();
+                hay.extend(c.composer.as_deref());
+                let tag_names: Vec<String> = c
+                    .tags
+                    .iter()
+                    .flat_map(|id| {
+                        let def = self.tags.iter().find(|d| &d.id == id);
+                        std::iter::once(id.clone()).chain(def.into_iter().flat_map(|d| d.title.0.iter().map(|(_, t)| t.clone())))
+                    })
+                    .collect();
+                hay.extend(tag_names.iter().map(String::as_str));
+                let hay = fold(&hay.join(" "));
+                words.iter().all(|w| hay.contains(w.as_str()))
+            })
+            .map(|(i, c)| (fold(c.title.get(lang)), i))
+            .collect();
+        v.sort();
+        v.into_iter().map(|(_, i)| i).collect()
     }
 
     pub fn difficulty_title(&self, level: &Level, lang: &str) -> String {
@@ -207,7 +332,13 @@ mod tests {
 
     #[test]
     fn loads_bundled_library() {
-        let lib = Library::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let project = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = resolve(project).unwrap();
+        assert_eq!(root, project.join("compositions"));
+        assert_eq!(resolve(&root).unwrap(), root);
+        assert!(resolve(&project.join("src")).is_none());
+        assert!(find_soundfont(Some(&root)).is_some());
+        let lib = Library::load(&root).unwrap();
         assert_eq!(lib.difficulties.len(), 5);
         assert!(lib.difficulties.iter().any(|d| d.id == "duet" && d.duet));
         let c = &lib.compositions[0];
@@ -217,6 +348,19 @@ mod tests {
         let stems: Vec<&str> = c.levels[0].lessons.iter().map(|l| l.stem.as_str()).collect();
         assert_eq!(stems, ["01-part-A", "02-part-B", "full"]);
         assert_eq!(c.levels[0].lessons[0].label, "A");
+
+        // Categories, alphabetical order, search and filter.
+        assert_eq!(lib.tag_title("christmas", "de"), "Weihnachten");
+        assert_eq!(lib.tag_title("unknown", "de"), "Unknown");
+        assert!(lib.categories().contains(&"christmas".to_string()));
+        let ids = |v: Vec<usize>| v.into_iter().map(|i| lib.compositions[i].id.as_str()).collect::<Vec<_>>();
+        let all = ids(lib.visible(None, "", "de"));
+        assert_eq!(all[..2], ["all-my-little-ducklings", "fuer-elise"]);
+        assert_eq!(ids(lib.visible(Some("christmas"), "", "de")), ["oh-christmas-tree", "silent-night"]);
+        assert_eq!(ids(lib.visible(None, "fur", "de")), ["fuer-elise"]);
+        assert_eq!(ids(lib.visible(None, "beethoven ode", "de")), ["ode-to-joy"]);
+        assert_eq!(ids(lib.visible(None, "weihnacht", "en")), ["oh-christmas-tree", "silent-night"]);
+        assert!(lib.visible(Some("birthday"), "elise", "de").is_empty());
 
         let sn = lib.compositions.iter().find(|c| c.id == "silent-night").unwrap();
         let ids: Vec<&str> = sn.levels.iter().map(|l| l.difficulty.as_str()).collect();
