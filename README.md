@@ -23,6 +23,7 @@ und läuft direkt auf dem Host.
 ./target/release/learn-piano --fullscreen
 ./target/release/learn-piano --x11          # X11/XWayland erzwingen (Standard: Wayland, falls die Sitzung Wayland ist)
 ./target/release/learn-piano --debug        # FPS und Eingaben anzeigen, Log in ~/.local/share/learn-piano/debug.log
+./target/release/learn-piano --check-library [DIR]   # fehlende/überzählige Übersetzungen der Bibliothek
 ```
 
 Die Bibliothek ist der Ordner mit der `compositions.xml`. Gesucht wird in dieser Reihenfolge:
@@ -46,7 +47,8 @@ Ohne Keyboard kann man die Tasten auf dem Bildschirm antippen.
 ```
 sound-fonts/default.sf2       Klang
 compositions/                 die Bibliothek
-  compositions.xml            Liste der Stücke und Schwierigkeitsstufen
+  compositions.xml            Liste der Stücke, Schwierigkeitsstufen und Kategorien (nur IDs, keine Texte)
+  locales/<sprache>/compositions.ftl   Titel in dieser Sprache (en ist Pflicht)
   <stück>/
     thumbnail.png
     <schwierigkeit>/          z.B. prep, beginner, duet – muss in compositions.xml definiert sein
@@ -66,8 +68,32 @@ sondern ein Duett. Sie wird in der Auswahl abgesetzt angezeigt. Die MusicXML ent
 `<part>`s: den ersten für den Schüler, den zweiten für den Lehrer.
 
 **Kategorien:** Die Tags der Stücke (`<tag>christmas</tag>`) erscheinen als Kategorien über
-der Liste. Ihre Namen stehen im Block `<tags>` in `compositions.xml`; Tags ohne Eintrag dort
-werden mit ihrer ID angezeigt.
+der Liste, in der Reihenfolge des Blocks `<tags>` in `compositions.xml`.
+
+## Übersetzungen
+
+Alle Texte werden mit [Fluent](https://projectfluent.org) übersetzt. Englisch ist die
+Ausgangssprache; fehlt eine Übersetzung, erscheint der englische Text. Die Sprachauswahl in den
+Einstellungen ergibt sich aus den vorhandenen Dateien.
+
+**App:** `locales/<sprache>/learn_piano.ftl`, beim Bauen ins Binary eingebettet. Für eine neue
+Sprache `locales/en` nach `locales/<code>` (z.B. `fr`, `pt-BR`) kopieren, die Werte übersetzen
+und `language-name` auf den Namen der Sprache in ihr selbst setzen. Jede im Code verwendete ID
+prüft `fl!` beim Kompilieren gegen die englische Datei; `cargo test` meldet IDs, die Englisch
+nicht kennt.
+
+**Bibliothek:** `compositions/locales/<sprache>/compositions.ftl` mit den IDs aus
+`compositions.xml`:
+
+```ftl
+difficulty-prep = Vorstufe
+tag-christmas = Weihnachten
+composition-silent-night = Stille Nacht
+```
+
+Diese Dateien liest die App zur Laufzeit, eine neue Sprache wirkt also ohne Neubau und reist mit
+der Bibliothek mit. `learn-piano --check-library [DIR]` listet pro Sprache, was fehlt oder
+nicht (mehr) in `compositions.xml` steht.
 
 ## Bedienung
 

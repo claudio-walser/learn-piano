@@ -4,67 +4,32 @@
   The folder containing this file is the library; path and thumbnail src are
   relative to it. The difficulty levels are the subfolders of each composition
   folder (e.g. oh-christmas-tree/beginner).
+  Titles are not stored here but in locales/<lang>/compositions.ftl, as
+  difficulty-<id>, tag-<id> and composition-<id>.
 -->
 <library format-version="1">
 
 <difficulties>
-  <difficulty id="prep">
-    <title xml:lang="de">Vorstufe</title>
-    <title xml:lang="en">Prep</title>
-  </difficulty>
-
-  <difficulty id="beginner">
-    <title xml:lang="de">Anfänger</title>
-    <title xml:lang="en">Beginner</title>
-  </difficulty>
-
-  <difficulty id="intermediate">
-    <title xml:lang="de">Fortgeschritten</title>
-    <title xml:lang="en">Intermediate</title>
-  </difficulty>
-
-  <difficulty id="expert">
-    <title xml:lang="de">Experte</title>
-    <title xml:lang="en">Expert</title>
-  </difficulty>
-
+  <difficulty id="prep"/>
+  <difficulty id="beginner"/>
+  <difficulty id="intermediate"/>
+  <difficulty id="expert"/>
   <!-- Not a difficulty step: a duet (student part + teacher part in one MusicXML).
        Shown apart from the difficulties; in the player you choose who plays which part. -->
-  <difficulty id="duet" kind="duet">
-    <title xml:lang="de">Duett</title>
-    <title xml:lang="en">Duet</title>
-  </difficulty>
+  <difficulty id="duet" kind="duet"/>
 </difficulties>
 
-<!-- Categories shown above the pieces. A composition uses them with <tag>id</tag>;
-     tags not listed here are shown with their id. -->
+<!-- Categories shown above the pieces, in this order. A composition uses them with <tag>id</tag>. -->
 <tags>
-  <tag id="children">
-    <title xml:lang="de">Kinderlieder</title>
-    <title xml:lang="en">Children's songs</title>
-  </tag>
-
-  <tag id="classical">
-    <title xml:lang="de">Klassik</title>
-    <title xml:lang="en">Classical</title>
-  </tag>
-
-  <tag id="christmas">
-    <title xml:lang="de">Weihnachten</title>
-    <title xml:lang="en">Christmas</title>
-  </tag>
-
-  <tag id="birthday">
-    <title xml:lang="de">Geburtstag</title>
-    <title xml:lang="en">Birthday</title>
-  </tag>
+  <tag id="children"/>
+  <tag id="classical"/>
+  <tag id="christmas"/>
+  <tag id="birthday"/>
 </tags>
 
 <compositions>
 
   <composition id="oh-christmas-tree" path="oh-christmas-tree">
-    <title xml:lang="de">Oh Tannenbaum</title>
-    <title xml:lang="en">Oh Christmas Tree</title>
     <composer>Ernst Anschütz</composer>
     <thumbnail src="oh-christmas-tree/thumbnail.png"/>
     <tags>
@@ -73,8 +38,6 @@
   </composition>
 
   <composition id="silent-night" path="silent-night">
-    <title xml:lang="de">Stille Nacht</title>
-    <title xml:lang="en">Silent Night</title>
     <composer>Franz Xaver Gruber</composer>
     <thumbnail src="silent-night/thumbnail.png"/>
     <tags>
@@ -83,9 +46,7 @@
   </composition>
 
   <composition id="happy-birthday" path="happy-birthday">
-    <title xml:lang="de">Happy Birthday</title>
-    <title xml:lang="en">Happy Birthday</title>
-    <composer>Patty und Mildred Hill</composer>
+    <composer>Patty Hill &amp; Mildred Hill</composer>
     <thumbnail src="happy-birthday/thumbnail.png"/>
     <tags>
       <tag>birthday</tag>
@@ -93,8 +54,6 @@
   </composition>
 
   <composition id="fuer-elise" path="fuer-elise">
-    <title xml:lang="de">Für Elise</title>
-    <title xml:lang="en">Für Elise</title>
     <composer>Ludwig van Beethoven</composer>
     <thumbnail src="fuer-elise/thumbnail.png"/>
     <tags>
@@ -103,8 +62,6 @@
   </composition>
 
   <composition id="ode-to-joy" path="ode-to-joy">
-    <title xml:lang="de">Ode an die Freude</title>
-    <title xml:lang="en">Ode to Joy</title>
     <composer>Ludwig van Beethoven</composer>
     <thumbnail src="ode-to-joy/thumbnail.png"/>
     <tags>
@@ -113,8 +70,6 @@
   </composition>
 
   <composition id="all-my-little-ducklings" path="all-my-little-ducklings">
-    <title xml:lang="de">Alle meine Entchen</title>
-    <title xml:lang="en">All My Little Ducklings</title>
     <composer>Ernst Anschütz</composer>
     <thumbnail src="all-my-little-ducklings/thumbnail.png"/>
     <tags>

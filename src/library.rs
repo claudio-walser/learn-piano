@@ -1,28 +1,45 @@
 //! Reads `compositions.xml` and discovers difficulty levels and lessons on disk.
+//!
+//! The library's texts (titles of pieces, difficulty levels and categories) live in
+//! `<library>/locales/<lang>/compositions.ftl` as `composition-<id>`, `difficulty-<id>` and
+//! `tag-<id>`. They are read at runtime, so a library can bring its own translations.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+use i18n_embed::fluent::FluentLanguageLoader;
+use i18n_embed::{I18nAssets, LanguageLoader};
+use unic_langid::LanguageIdentifier;
 
-/// A text available in several languages (`xml:lang`).
-#[derive(Clone, Debug, Default)]
-pub struct Localized(pub Vec<(String, String)>);
+const DOMAIN: &str = "compositions";
 
-impl Localized {
-    pub fn get(&self, lang: &str) -> &str {
-        self.0
-            .iter()
-            .find(|(l, _)| l == lang)
-            .or_else(|| self.0.iter().find(|(l, _)| l == "en"))
-            .or_else(|| self.0.first())
-            .map(|(_, t)| t.as_str())
-            .unwrap_or("")
+/// `<library>/locales/<lang>/compositions.ftl` as Fluent assets.
+struct LibraryAssets(PathBuf);
+
+impl I18nAssets for LibraryAssets {
+    fn get_files(&self, file_path: &str) -> Vec<Cow<'_, [u8]>> {
+        std::fs::read(self.0.join(file_path)).map(Cow::from).into_iter().collect()
     }
+
+    /// `<lang>/compositions.ftl` for every language folder.
+    fn filenames_iter(&self) -> Box<dyn Iterator<Item = String> + '_> {
+        let file = format!("{DOMAIN}.ftl");
+        Box::new(subfolders(&self.0).into_iter().filter(move |(_, p)| p.join(&file).is_file()).map(|(lang, _)| format!("{lang}/{DOMAIN}.ftl")))
+    }
+}
+
+/// Languages of a library and the messages per language that are missing compared to
+/// English or that English does not have.
+pub struct TranslationReport {
+    pub lang: String,
+    pub missing: Vec<String>,
+    pub extra: Vec<String>,
 }
 
 pub struct DifficultyDef {
     pub id: String,
-    pub title: Localized,
+    /// In the current language (see [`Library::localize`]).
+    pub title: String,
     /// `kind="duet"`: not a difficulty step but a duet arrangement.
     pub duet: bool,
 }
@@ -30,7 +47,8 @@ pub struct DifficultyDef {
 /// A category (`<tags><tag id="…">` in compositions.xml).
 pub struct TagDef {
     pub id: String,
-    pub title: Localized,
+    /// In the current language (see [`Library::localize`]).
+    pub title: String,
 }
 
 pub struct Lesson {
@@ -53,7 +71,9 @@ pub struct Level {
 
 pub struct Composition {
     pub id: String,
-    pub title: Localized,
+    /// In the current language, and in English for the search (see [`Library::localize`]).
+    pub title: String,
+    pub title_en: String,
     pub composer: Option<String>,
     pub thumbnail: Option<PathBuf>,
     pub tags: Vec<String>,
@@ -65,6 +85,15 @@ pub struct Library {
     pub difficulties: Vec<DifficultyDef>,
     pub tags: Vec<TagDef>,
     pub compositions: Vec<Composition>,
+    /// All languages of `locales/`; `None` when the library has no texts at all.
+    texts: Option<FluentLanguageLoader>,
+}
+
+/// Fallback text for an id without translation: "silent-night" → "Silent night".
+fn prettify(id: &str) -> String {
+    let t = id.replace(['-', '_'], " ");
+    let mut c = t.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 /// Lower case without accents, for search and sorting ("Für" matches "fur").
@@ -146,16 +175,17 @@ pub fn subfolders(dir: &Path) -> Vec<(String, PathBuf)> {
     v
 }
 
-fn localized(node: roxmltree::Node, tag: &str) -> Localized {
-    Localized(
-        node.children()
-            .filter(|c| c.has_tag_name(tag))
-            .map(|c| {
-                let lang = c.attribute((XML_NS, "lang")).unwrap_or("en").to_string();
-                (lang, c.text().unwrap_or("").trim().to_string())
-            })
-            .collect(),
-    )
+/// Loads every language in `<root>/locales`. English is the fallback.
+fn load_texts(root: &Path) -> Option<FluentLanguageLoader> {
+    let assets = LibraryAssets(root.join("locales"));
+    let loader = FluentLanguageLoader::new(DOMAIN, "en".parse().unwrap());
+    let langs = loader.available_languages(&assets).ok().filter(|l| !l.is_empty())?;
+    if let Err(e) = loader.load_languages(&assets, &langs) {
+        eprintln!("{}: {e}", root.join("locales").display());
+        return None;
+    }
+    loader.set_use_isolating(false);
+    Some(loader)
 }
 
 impl Library {
@@ -173,7 +203,7 @@ impl Library {
             .filter_map(|n| {
                 Some(DifficultyDef {
                     id: n.attribute("id")?.to_string(),
-                    title: localized(n, "title"),
+                    title: String::new(),
                     duet: n.attribute("kind") == Some("duet"),
                 })
             })
@@ -183,7 +213,7 @@ impl Library {
             .children()
             .filter(|n| n.has_tag_name("tags"))
             .flat_map(|n| n.children().filter(|c| c.has_tag_name("tag")))
-            .filter_map(|n| Some(TagDef { id: n.attribute("id")?.to_string(), title: localized(n, "title") }))
+            .filter_map(|n| Some(TagDef { id: n.attribute("id")?.to_string(), title: String::new() }))
             .collect();
 
         // Paths are relative to the folder of compositions.xml.
@@ -215,7 +245,8 @@ impl Library {
                 .collect();
             compositions.push(Composition {
                 id: id.to_string(),
-                title: localized(n, "title"),
+                title: String::new(),
+                title_en: String::new(),
                 composer,
                 thumbnail,
                 tags,
@@ -223,16 +254,72 @@ impl Library {
             });
         }
 
-        Ok(Library { root: root.to_path_buf(), difficulties, tags, compositions })
+        let texts = load_texts(root);
+        let mut lib = Library { root: root.to_path_buf(), difficulties, tags, compositions, texts };
+        lib.localize(&"en".parse().unwrap());
+        Ok(lib)
     }
 
-    pub fn tag_title(&self, id: &str, lang: &str) -> String {
-        match self.tags.iter().find(|t| t.id == id) {
-            Some(t) => t.title.get(lang).to_string(),
-            None => {
-                let mut c = id.chars();
-                c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    /// Sets all titles to `lang`, falling back to English and then to the id.
+    pub fn localize(&mut self, lang: &LanguageIdentifier) {
+        let en: LanguageIdentifier = "en".parse().unwrap();
+        let pick = |l: &LanguageIdentifier| self.texts.as_ref().map(|t| t.select_languages(&[l]));
+        let (cur, eng) = (pick(lang), pick(&en));
+        let get = |loader: &Option<FluentLanguageLoader>, prefix: &str, id: &str| {
+            let key = format!("{prefix}-{id}");
+            match loader {
+                Some(l) if l.has(&key) => l.get(&key),
+                _ => prettify(id),
             }
+        };
+        for d in &mut self.difficulties {
+            d.title = get(&cur, "difficulty", &d.id);
+        }
+        for t in &mut self.tags {
+            t.title = get(&cur, "tag", &t.id);
+        }
+        for c in &mut self.compositions {
+            c.title = get(&cur, "composition", &c.id);
+            c.title_en = get(&eng, "composition", &c.id);
+        }
+    }
+
+    /// Message ids every language should have: one per composition, difficulty and
+    /// category (also categories only used by compositions).
+    fn expected_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.difficulties.iter().map(|d| format!("difficulty-{}", d.id)).collect();
+        ids.extend(self.categories().iter().chain(self.tags.iter().map(|t| &t.id)).map(|t| format!("tag-{t}")));
+        ids.extend(self.compositions.iter().map(|c| format!("composition-{}", c.id)));
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// For `--check-library`: what is missing or left over per language.
+    pub fn check_translations(&self) -> Vec<TranslationReport> {
+        let expected = self.expected_ids();
+        let Some(texts) = &self.texts else {
+            return vec![TranslationReport { lang: "en".into(), missing: expected, extra: Vec::new() }];
+        };
+        let mut langs = texts.available_languages(&LibraryAssets(self.root.join("locales"))).unwrap_or_default();
+        langs.sort_by_key(|l| (l.to_string() != "en", l.to_string()));
+        langs
+            .iter()
+            .map(|lang| {
+                let have: Vec<String> = texts.with_message_iter(lang, |it| it.map(|m| m.id.name.to_string()).collect());
+                TranslationReport {
+                    lang: lang.to_string(),
+                    missing: expected.iter().filter(|id| !have.contains(id)).cloned().collect(),
+                    extra: have.iter().filter(|id| !expected.contains(id)).cloned().collect(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn tag_title(&self, id: &str) -> String {
+        match self.tags.iter().find(|t| t.id == id) {
+            Some(t) => t.title.clone(),
+            None => prettify(id),
         }
     }
 
@@ -253,8 +340,8 @@ impl Library {
     }
 
     /// Indices of the compositions with tag `tag` (all for `None`) matching `query`
-    /// (in any title language, the composer or a category name), sorted by title.
-    pub fn visible(&self, tag: Option<&str>, query: &str, lang: &str) -> Vec<usize> {
+    /// (title in the current language or English, composer or category), sorted by title.
+    pub fn visible(&self, tag: Option<&str>, query: &str) -> Vec<usize> {
         let words: Vec<String> = fold(query).split_whitespace().map(str::to_string).collect();
         let mut v: Vec<(String, usize)> = self
             .compositions
@@ -262,30 +349,22 @@ impl Library {
             .enumerate()
             .filter(|(_, c)| tag.is_none_or(|t| c.tags.iter().any(|x| x == t)))
             .filter(|(_, c)| {
-                let mut hay: Vec<&str> = c.title.0.iter().map(|(_, t)| t.as_str()).collect();
-                hay.extend(c.composer.as_deref());
-                let tag_names: Vec<String> = c
-                    .tags
-                    .iter()
-                    .flat_map(|id| {
-                        let def = self.tags.iter().find(|d| &d.id == id);
-                        std::iter::once(id.clone()).chain(def.into_iter().flat_map(|d| d.title.0.iter().map(|(_, t)| t.clone())))
-                    })
-                    .collect();
-                hay.extend(tag_names.iter().map(String::as_str));
+                let mut hay: Vec<String> = vec![c.title.clone(), c.title_en.clone()];
+                hay.extend(c.composer.clone());
+                hay.extend(c.tags.iter().flat_map(|id| [id.clone(), self.tag_title(id)]));
                 let hay = fold(&hay.join(" "));
                 words.iter().all(|w| hay.contains(w.as_str()))
             })
-            .map(|(i, c)| (fold(c.title.get(lang)), i))
+            .map(|(i, c)| (fold(&c.title), i))
             .collect();
         v.sort();
         v.into_iter().map(|(_, i)| i).collect()
     }
 
-    pub fn difficulty_title(&self, level: &Level, lang: &str) -> String {
+    pub fn difficulty_title(&self, level: &Level) -> String {
         self.difficulties
             .get(level.difficulty_index)
-            .map(|d| d.title.get(lang).to_string())
+            .map(|d| d.title.clone())
             .unwrap_or_else(|| level.difficulty.clone())
     }
 }
@@ -338,8 +417,17 @@ mod tests {
         assert_eq!(resolve(&root).unwrap(), root);
         assert!(resolve(&project.join("src")).is_none());
         assert!(find_soundfont(Some(&root)).is_some());
-        let lib = Library::load(&root).unwrap();
+        let mut lib = Library::load(&root).unwrap();
         assert_eq!(lib.difficulties.len(), 5);
+        // Every language of the bundled library is complete.
+        for r in lib.check_translations() {
+            assert!(r.missing.is_empty() && r.extra.is_empty(), "{}: missing {:?}, extra {:?}", r.lang, r.missing, r.extra);
+        }
+        assert_eq!(lib.compositions[1].title, "Silent Night");
+        lib.localize(&"de".parse().unwrap());
+        assert_eq!(lib.compositions[1].title, "Stille Nacht");
+        assert_eq!(lib.compositions[1].title_en, "Silent Night");
+        assert_eq!(lib.difficulty_title(&lib.compositions[1].levels[0]), "Vorstufe");
         assert!(lib.difficulties.iter().any(|d| d.id == "duet" && d.duet));
         let c = &lib.compositions[0];
         assert_eq!(c.composer.as_deref(), Some("Ernst Anschütz"));
@@ -350,17 +438,19 @@ mod tests {
         assert_eq!(c.levels[0].lessons[0].label, "A");
 
         // Categories, alphabetical order, search and filter.
-        assert_eq!(lib.tag_title("christmas", "de"), "Weihnachten");
-        assert_eq!(lib.tag_title("unknown", "de"), "Unknown");
+        assert_eq!(lib.tag_title("christmas"), "Weihnachten");
+        assert_eq!(lib.tag_title("rock-pop"), "Rock pop");
         assert!(lib.categories().contains(&"christmas".to_string()));
         let ids = |v: Vec<usize>| v.into_iter().map(|i| lib.compositions[i].id.as_str()).collect::<Vec<_>>();
-        let all = ids(lib.visible(None, "", "de"));
+        let all = ids(lib.visible(None, ""));
         assert_eq!(all[..2], ["all-my-little-ducklings", "fuer-elise"]);
-        assert_eq!(ids(lib.visible(Some("christmas"), "", "de")), ["oh-christmas-tree", "silent-night"]);
-        assert_eq!(ids(lib.visible(None, "fur", "de")), ["fuer-elise"]);
-        assert_eq!(ids(lib.visible(None, "beethoven ode", "de")), ["ode-to-joy"]);
-        assert_eq!(ids(lib.visible(None, "weihnacht", "en")), ["oh-christmas-tree", "silent-night"]);
-        assert!(lib.visible(Some("birthday"), "elise", "de").is_empty());
+        assert_eq!(ids(lib.visible(Some("christmas"), "")), ["oh-christmas-tree", "silent-night"]);
+        assert_eq!(ids(lib.visible(None, "fur")), ["fuer-elise"]);
+        assert_eq!(ids(lib.visible(None, "beethoven ode")), ["ode-to-joy"]);
+        assert_eq!(ids(lib.visible(None, "weihnacht")), ["oh-christmas-tree", "silent-night"]);
+        // English titles are found in German too.
+        assert_eq!(ids(lib.visible(None, "silent")), ["silent-night"]);
+        assert!(lib.visible(Some("birthday"), "elise").is_empty());
 
         let sn = lib.compositions.iter().find(|c| c.id == "silent-night").unwrap();
         let ids: Vec<&str> = sn.levels.iter().map(|l| l.difficulty.as_str()).collect();

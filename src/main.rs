@@ -17,7 +17,8 @@ use macroquad::prelude::*;
 
 use audio::{Audio, Status};
 use fireworks::Fireworks;
-use i18n::{Lang, Strings};
+use i18n::{I18n, Strings};
+use unic_langid::LanguageIdentifier;
 use keyboard::{is_black, KeyLayout, KeyboardSize};
 use library::{Lesson, Library};
 use midi::{Midi, MidiEvent};
@@ -74,8 +75,50 @@ fn use_wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
 }
 
-#[macroquad::main(window_conf)]
-async fn main() {
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--check-library") {
+        std::process::exit(check_library(args.get(i + 1).map(std::path::Path::new)));
+    }
+    macroquad::Window::from_config(window_conf(), run());
+}
+
+/// `--check-library [DIR]`: prints the translations missing or left over per language.
+/// Exit code 1 when something is missing in English or left over anywhere.
+fn check_library(dir: Option<&std::path::Path>) -> i32 {
+    let root = match dir {
+        Some(d) => library::resolve(d).ok_or(Some(d.to_path_buf())),
+        None => library::find_root(None),
+    };
+    let lib = match root.map_err(|d| format!("no compositions.xml in {}", d.map_or("the usual places".into(), |d| d.display().to_string()))).and_then(|r| Library::load(&r)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    println!("{}", lib.root.display());
+    let mut code = 0;
+    for r in lib.check_translations() {
+        if r.missing.is_empty() && r.extra.is_empty() {
+            println!("  {}: complete", r.lang);
+            continue;
+        }
+        if !r.extra.is_empty() || r.lang == "en" {
+            code = 1;
+        }
+        println!("  {}:", r.lang);
+        if !r.missing.is_empty() {
+            println!("    missing: {}", r.missing.join(", "));
+        }
+        if !r.extra.is_empty() {
+            println!("    unknown (not in compositions.xml): {}", r.extra.join(", "));
+        }
+    }
+    code
+}
+
+async fn run() {
     // Pointer handles touches itself (see ui::Pointer).
     simulate_mouse_with_touch(false);
     let mut app = App::new();
@@ -121,7 +164,12 @@ struct App {
     midi: Midi,
     echo: Arc<AtomicBool>,
     progress: Progress,
-    lang: Lang,
+    i18n: I18n,
+    lang: LanguageIdentifier,
+    strings: &'static Strings,
+    /// The language list of the settings is open (when there are too many for buttons).
+    lang_menu: bool,
+    lang_scroll: f32,
     screen: Screen,
     pointer: Pointer,
     /// Dev aid: `LEARN_PIANO_SHOTS=<dir>` walks through all screens, saves PNGs and quits.
@@ -177,9 +225,16 @@ fn display_path(p: &std::path::Path) -> String {
 }
 
 /// Loads the library and its thumbnails; on failure the error screen.
-fn load_library(root: Result<std::path::PathBuf, Option<std::path::PathBuf>>, s: &Strings) -> (Option<Library>, Vec<Option<Texture2D>>, Screen) {
+fn load_library(
+    root: Result<std::path::PathBuf, Option<std::path::PathBuf>>,
+    s: &Strings,
+    lang: &LanguageIdentifier,
+) -> (Option<Library>, Vec<Option<Texture2D>>, Screen) {
     let lib = match root {
-        Ok(root) => Library::load(&root),
+        Ok(root) => Library::load(&root).map(|mut l| {
+            l.localize(lang);
+            l
+        }),
         Err(Some(dir)) => Err(format!("{}: {}", display_path(&dir), s.no_library_here)),
         Err(None) => Err(s.no_library.to_string()),
     };
@@ -210,7 +265,7 @@ fn lesson_label(s: &Strings, lesson: &Lesson) -> String {
     if lesson.is_full {
         s.full_piece.to_string()
     } else {
-        format!("{} {}", s.part, lesson.label)
+        s.part(&lesson.label)
     }
 }
 
@@ -224,9 +279,11 @@ fn hand_color(h: Hand) -> Color {
 impl App {
     fn new() -> App {
         let progress = Progress::load();
-        let lang = progress.settings.language.unwrap_or_else(Lang::detect);
+        let mut i18n = I18n::load();
+        let lang = i18n.resolve(progress.settings.language.as_deref());
+        let strings = i18n.strings(&lang);
         let root = library::find_root(progress.settings.library.as_deref());
-        let (lib, thumbs, screen) = load_library(root, lang.strings());
+        let (lib, thumbs, screen) = load_library(root, strings, &lang);
         let audio = Audio::start(library::find_soundfont(lib.as_ref().map(|l| l.root.as_path())));
         let echo = Arc::new(AtomicBool::new(progress.settings.echo_input));
         let midi = Midi::new(audio.sender(), echo.clone());
@@ -241,7 +298,11 @@ impl App {
             midi,
             echo,
             progress,
+            i18n,
             lang,
+            strings,
+            lang_menu: false,
+            lang_scroll: 0.0,
             screen,
             pointer: Pointer::default(),
             scroll: 0.0,
@@ -257,7 +318,7 @@ impl App {
     }
 
     fn s(&self) -> &'static Strings {
-        self.lang.strings()
+        self.strings
     }
 
     fn frame(&mut self) {
@@ -444,8 +505,7 @@ impl App {
         let bar = Rect::new(0.0, header, w, 64.0);
         let top = bar.y + bar.h;
         let Some(lib) = &self.lib else { return None };
-        let lang = self.lang.code();
-        let visible = lib.visible(self.category.as_deref(), &self.search, lang);
+        let visible = lib.visible(self.category.as_deref(), &self.search);
 
         // ---- pieces: sorted by title, filtered by category and search
         let gap = 28.0;
@@ -480,7 +540,7 @@ impl App {
                 Some(t) => draw_cover(t, img),
                 None => rounded_rect(img, 12.0, PANEL_HI),
             }
-            let title = comp.title.get(lang);
+            let title = comp.title.as_str();
             let ts = fit_size(&self.fonts.bold, title, 23.0, cw - 32.0);
             text_left(&self.fonts.bold, title, card.x + 16.0, img.y + img.h + 26.0, ts, TEXT);
             if let Some(c) = &comp.composer {
@@ -512,7 +572,7 @@ impl App {
         let f = &self.fonts;
         let mut chips: Vec<(Option<String>, String)> = vec![(None, s.all.to_string())];
         chips.extend(lib.categories().into_iter().map(|id| {
-            let t = lib.tag_title(&id, lang);
+            let t = lib.tag_title(&id);
             (Some(id), t)
         }));
         let (chip_h, chip_gap, size) = (44.0, 10.0, 18.0);
@@ -608,7 +668,6 @@ impl App {
 
     fn difficulty(&mut self, c: usize, ptr: &Pointer) -> Option<Action> {
         let s = self.s();
-        let lang = self.lang.code();
         let (w, h) = (vw(), vh());
         let lib = self.lib.as_ref()?;
         let comp = &lib.compositions[c];
@@ -630,7 +689,7 @@ impl App {
         }
 
         let mut y = hero_h + 62.0 * sc;
-        let title = comp.title.get(lang);
+        let title = comp.title.as_str();
         text_center(&f.bold, title, w / 2.0, y, fit_size(&f.bold, title, 56.0 * sc, w - 40.0), TEXT);
         if let Some(composer) = &comp.composer {
             y += 58.0 * sc;
@@ -663,7 +722,7 @@ impl App {
         for (li, level) in comp.levels.iter().enumerate() {
             let cx = w / 2.0 + (slot[li] - (n - 1.0) / 2.0) * spacing;
             let col = difficulty_color(level.difficulty_index);
-            let name = lib.difficulty_title(level, lang);
+            let name = lib.difficulty_title(level);
             let hot = ptr.down && ptr.pos.distance(vec2(cx, cy)) <= r && ptr.moved < 18.0;
             // Name on every button; the play icon only while the mouse is over it
             // (touch has no hover). The recommended level is filled.
@@ -686,7 +745,7 @@ impl App {
             let ly = cy + r + 22.0 * sc;
             stars_row(cx, ly, 10.0 * sc, stars);
             if level.lessons.len() > 1 {
-                let txt = format!("{} {}", level.lessons.len(), s.lessons);
+                let txt = s.lesson_count(level.lessons.len());
                 text_center(&f.regular, &txt, cx, ly + 28.0 * sc, 18.0 * sc, MUTED);
             }
             if ptr.tapped_circle(vec2(cx, cy), r) {
@@ -700,7 +759,6 @@ impl App {
 
     fn player(&mut self, p: &mut Player, ptr: &Pointer, events: &[MidiEvent]) -> Option<Action> {
         let s = self.s();
-        let lang = self.lang.code();
         let (w, h) = (vw(), vh());
         let lib = self.lib.as_ref()?;
         let comp = &lib.compositions[p.comp];
@@ -871,7 +929,7 @@ impl App {
 
         // Titles, shrunk to fit left of the chips
         let title_w = chips_left - 80.0 - 12.0;
-        let title = comp.title.get(lang);
+        let title = comp.title.as_str();
         text_left(&f.bold, title, 80.0, 24.0, fit_size(&f.bold, title, 24.0, title_w), TEXT);
         let lesson_title = p
             .practice
@@ -879,7 +937,7 @@ impl App {
             .title
             .clone()
             .unwrap_or_else(|| lesson_label(s, &level.lessons[p.lesson]));
-        let sub = format!("{} · {}", lib.difficulty_title(level, lang), lesson_title);
+        let sub = format!("{} · {}", lib.difficulty_title(level), lesson_title);
         text_left(&f.regular, &sub, 80.0, 50.0, fit_size(&f.regular, &sub, 17.0, title_w), diff_col);
 
         // Control row
@@ -1197,7 +1255,19 @@ impl App {
 
     // -------------------------------------------------------------- settings
 
+    fn set_language(&mut self, id: LanguageIdentifier) {
+        self.strings = self.i18n.strings(&id);
+        if let Some(lib) = &mut self.lib {
+            lib.localize(&id);
+        }
+        self.progress.settings.language = Some(id.to_string());
+        self.lang = id;
+    }
+
     fn settings(&mut self, ptr: Pointer) {
+        // While the language list is open it gets the input (from the frame after it opened).
+        let menu_was_open = self.lang_menu;
+        let (ptr, menu_ptr) = if menu_was_open { (Pointer::default(), ptr) } else { (ptr, Pointer::default()) };
         let s = self.s();
         let (w, h) = (vw(), vh());
         draw_rectangle(0.0, 0.0, w, h, alpha(BLACK, 0.6));
@@ -1214,12 +1284,15 @@ impl App {
         let seg_rect = |i: usize| Rect::new(panel.x + 24.0 + label_w, row(i) - 26.0, seg_w, 52.0);
 
         let mut changed = false;
+        // Language: buttons while they fit, otherwise a list that opens below.
         text_left(&f.regular, s.language, panel.x + 32.0, row(0), 20.0, TEXT);
-        let li = if self.lang == Lang::De { 0 } else { 1 };
-        if let Some(i) = segmented(f, &ptr, seg_rect(0), &["Deutsch", "English"], li, TEXT, 18.0) {
-            self.lang = if i == 0 { Lang::De } else { Lang::En };
-            self.progress.settings.language = Some(self.lang);
-            changed = true;
+        let names: Vec<&str> = self.i18n.languages.iter().map(|(_, n)| n.as_str()).collect();
+        let li = self.i18n.languages.iter().position(|(l, _)| *l == self.lang).unwrap_or(0);
+        let mut pick = None;
+        if names.len() <= 3 {
+            pick = segmented(f, &ptr, seg_rect(0), &names, li, TEXT, 18.0);
+        } else if button(f, &ptr, seg_rect(0), &format!("{}  ▾", names[li]), PANEL_HI, TEXT, 18.0) {
+            self.lang_menu = true;
         }
         let f = &self.fonts;
         let lw = fit_size(&f.regular, s.echo, 20.0, label_w - 12.0);
@@ -1265,6 +1338,41 @@ impl App {
         if button(f, &ptr, close, s.close, PANEL_HI, TEXT, 20.0) || (ptr.released && !panel.contains(ptr.pos) && !panel.contains(ptr.press_pos)) {
             self.show_settings = false;
         }
+        if menu_was_open {
+            let r = seg_rect(0);
+            let row_h = 48.0;
+            let list = Rect::new(r.x, r.y + r.h + 4.0, r.w, (names.len() as f32 * row_h).min(h - r.y - r.h - 20.0));
+            let max_scroll = (names.len() as f32 * row_h - list.h).max(0.0);
+            if menu_ptr.dragging() && list.contains(menu_ptr.press_pos) {
+                self.lang_scroll -= menu_ptr.delta.y;
+            }
+            if list.contains(menu_ptr.pos) {
+                self.lang_scroll -= wheel_notches() * 48.0;
+            }
+            self.lang_scroll = self.lang_scroll.clamp(0.0, max_scroll);
+            rounded_rect(Rect::new(list.x - 4.0, list.y - 4.0, list.w + 8.0, list.h + 8.0), 14.0, PANEL_HI);
+            for (i, name) in names.iter().enumerate() {
+                let row = Rect::new(list.x, list.y + i as f32 * row_h - self.lang_scroll, list.w, row_h);
+                if row.y < list.y - 1.0 || row.y + row.h > list.y + list.h + 1.0 {
+                    continue;
+                }
+                if i == li || menu_ptr.pressing(row) {
+                    rounded_rect(row, 10.0, if i == li { TEXT } else { PANEL });
+                }
+                text_left(&f.bold, name, row.x + 16.0, row.y + row_h / 2.0, 18.0, if i == li { BG } else { TEXT });
+                if menu_ptr.tapped(row) {
+                    pick = Some(i);
+                }
+            }
+            if menu_ptr.released && menu_ptr.moved < 18.0 {
+                self.lang_menu = false;
+            }
+        }
+        if let Some(i) = pick {
+            let id = self.i18n.languages[i].0.clone();
+            self.set_language(id);
+            changed = true;
+        }
         if changed {
             self.progress.save();
         }
@@ -1308,7 +1416,7 @@ impl App {
         self.progress.settings.library = dir.clone();
         self.progress.save();
         let root = library::find_root(dir.as_deref());
-        (self.lib, self.thumbs, self.screen) = load_library(root, self.s());
+        (self.lib, self.thumbs, self.screen) = load_library(root, self.s(), &self.lang);
         self.scroll = 0.0;
         self.browser = None;
         self.show_settings = false;

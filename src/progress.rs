@@ -5,15 +5,14 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::i18n::Lang;
 use crate::keyboard::KeyboardSize;
 use crate::practice::{Hands, Mode, Players};
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Settings {
-    /// `None` = follow the system language.
-    pub language: Option<Lang>,
+    /// Language code like "de"; `None` = follow the system language.
+    pub language: Option<String>,
     pub echo_input: bool,
     pub fullscreen: bool,
     pub mode: Mode,

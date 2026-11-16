@@ -1,0 +1,6 @@
+# Configuration for i18n-embed / the fl!() macro: app texts live in locales/<lang>/learn_piano.ftl,
+# English is the source language and the fallback for missing messages.
+fallback_language = "en"
+
+[fluent]
+assets_dir = "locales"
