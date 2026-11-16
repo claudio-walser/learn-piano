@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn parses_bundled_lessons() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/oh-tannenbaum/beginner");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/oh-christmas-tree/beginner");
         for f in ["01-part-A.musicxml", "02-part-B.musicxml", "full.musicxml"] {
             let s = load(&root.join(f)).unwrap();
             assert!(!s.notes.is_empty(), "{f}");

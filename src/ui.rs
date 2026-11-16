@@ -317,6 +317,9 @@ pub struct Pointer {
     pub moved: f32,
     /// The finger currently acting as the pointer.
     touch_id: Option<u64>,
+    /// The last input came from a mouse (so `pos` is a real hover position).
+    mouse: bool,
+    last_mouse: Vec2,
 }
 
 const TAP_SLOP: f32 = 18.0;
@@ -324,12 +327,21 @@ const TAP_SLOP: f32 = 18.0;
 impl Pointer {
     pub fn update(&mut self) {
         let s = scale();
-        let mut pos = Vec2::from(mouse_position()) / s;
+        let raw = Vec2::from(mouse_position());
+        let mut pos = raw / s;
         let mut pressed = is_mouse_button_pressed(MouseButton::Left);
         let mut down = is_mouse_button_down(MouseButton::Left);
         let mut released = is_mouse_button_released(MouseButton::Left);
 
-        for t in touches() {
+        let touches = touches();
+        if !touches.is_empty() {
+            self.mouse = false;
+        } else if raw != self.last_mouse || pressed {
+            self.mouse = true;
+        }
+        self.last_mouse = raw;
+
+        for t in touches {
             let tpos = t.position / s;
             let ours = self.touch_id == Some(t.id);
             match t.phase {
@@ -370,6 +382,11 @@ impl Pointer {
 
     pub fn tapped(&self, r: Rect) -> bool {
         self.released && self.moved < TAP_SLOP && r.contains(self.pos) && r.contains(self.press_pos)
+    }
+
+    /// The mouse hovers over the circle. Never true for touch, which has no hover.
+    pub fn hovering_circle(&self, c: Vec2, r: f32) -> bool {
+        self.mouse && !self.dragging() && self.pos.distance(c) <= r
     }
 
     pub fn tapped_circle(&self, c: Vec2, r: f32) -> bool {

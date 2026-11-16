@@ -3,7 +3,7 @@
   List of all compositions in the library.
   path and thumbnail src are relative to the compositions/ folder.
   The difficulty levels are the subfolders of each composition folder
-  (e.g. compositions/oh-tannenbaum/beginner).
+  (e.g. compositions/oh-christmas-tree/beginner).
 -->
 <library format-version="1">
 
@@ -31,11 +31,11 @@
 
 <compositions>
 
-  <composition id="oh-tannenbaum" path="oh-tannenbaum">
+  <composition id="oh-christmas-tree" path="oh-christmas-tree">
     <title xml:lang="de">Oh Tannenbaum</title>
     <title xml:lang="en">Oh Christmas Tree</title>
     <composer>Ernst Anschütz</composer>
-    <thumbnail src="oh-tannenbaum/thumbnail.png"/>
+    <thumbnail src="oh-christmas-tree/thumbnail.png"/>
     <tags>
       <tag>christmas</tag>
     </tags>

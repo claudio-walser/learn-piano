@@ -486,26 +486,27 @@ impl App {
             let col = difficulty_color(level.difficulty_index);
             let name = lib.difficulty_title(level, lang);
             let hot = ptr.down && ptr.pos.distance(vec2(cx, cy)) <= r && ptr.moved < 18.0;
-            if Some(li) == recommended {
+            // Name on every button; the play icon only while the mouse is over it
+            // (touch has no hover). The recommended level is filled.
+            if hot || ptr.hovering_circle(vec2(cx, cy), r) {
                 draw_poly(cx, cy, 64, r, 0.0, if hot { mix(col, WHITE, 0.2) } else { col });
                 icon_play(vec2(cx, cy), r * 0.62, alpha(BG, 0.92));
             } else {
-                if hot {
-                    draw_poly(cx, cy, 64, r, 0.0, alpha(col, 0.18));
-                }
-                draw_poly_lines(cx, cy, 64, r, 0.0, 2.5, col);
+                let fg = if Some(li) == recommended {
+                    draw_poly(cx, cy, 64, r, 0.0, col);
+                    BG
+                } else {
+                    draw_poly_lines(cx, cy, 64, r, 0.0, 2.5, col);
+                    col
+                };
                 let fs = fit_size(&f.bold, &name, 26.0 * sc, r * 1.8);
-                text_center(&f.bold, &name, cx, cy, fs, col);
+                text_center(&f.bold, &name, cx, cy, fs, fg);
             }
             let full = level.lessons.last().unwrap();
             let stars = self.progress.stars(&lesson_key(lib, c, li, full));
-            let mut ly = cy + r + 22.0 * sc;
-            if Some(li) == recommended {
-                text_center(&f.bold, &name, cx, ly, fit_size(&f.bold, &name, 22.0 * sc, spacing - 8.0), col);
-                ly += 30.0 * sc;
-            }
+            let ly = cy + r + 22.0 * sc;
             stars_row(cx, ly, 10.0 * sc, stars);
-            if level.lessons.len() > 1 && Some(li) != recommended {
+            if level.lessons.len() > 1 {
                 let txt = format!("{} {}", level.lessons.len(), s.lessons);
                 text_center(&f.regular, &txt, cx, ly + 28.0 * sc, 18.0 * sc, MUTED);
             }
