@@ -41,12 +41,13 @@ pub const STAR_GOLD: Color = rgb(0xffc400);
 
 /// Color per difficulty position: green, yellow, red, then extras.
 pub fn difficulty_color(index: usize) -> Color {
+    // Order of compositions.xml: prep, beginner, intermediate, expert, …
     const C: [Color; 6] = [
+        rgb(0x4fc3f7),
         rgb(0x55e00f),
         rgb(0xffc400),
         rgb(0xe01b24),
         rgb(0xb36bff),
-        rgb(0x4fc3f7),
         rgb(0xff8a3d),
     ];
     C[index % C.len()]

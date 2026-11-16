@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn loads_bundled_library() {
         let lib = Library::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        assert_eq!(lib.difficulties.len(), 3);
+        assert_eq!(lib.difficulties.len(), 4);
         let c = &lib.compositions[0];
         assert_eq!(c.composer.as_deref(), Some("Ernst Anschütz"));
         assert!(c.thumbnail.as_ref().unwrap().is_file(), "{:?}", c.thumbnail);
@@ -212,5 +212,10 @@ mod tests {
         let stems: Vec<&str> = c.levels[0].lessons.iter().map(|l| l.stem.as_str()).collect();
         assert_eq!(stems, ["01-part-A", "02-part-B", "full"]);
         assert_eq!(c.levels[0].lessons[0].label, "A");
+
+        let sn = lib.compositions.iter().find(|c| c.id == "silent-night").unwrap();
+        let ids: Vec<&str> = sn.levels.iter().map(|l| l.difficulty.as_str()).collect();
+        assert_eq!(ids, ["prep", "beginner", "intermediate"]);
+        assert!(sn.levels.iter().all(|l| l.lessons.len() == 4));
     }
 }

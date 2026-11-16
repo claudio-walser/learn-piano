@@ -8,6 +8,11 @@
 <library format-version="1">
 
 <difficulties>
+  <difficulty id="prep">
+    <title xml:lang="de">Vorstufe</title>
+    <title xml:lang="en">Prep</title>
+  </difficulty>
+
   <difficulty id="beginner">
     <title xml:lang="de">Anfänger</title>
     <title xml:lang="en">Beginner</title>
@@ -33,7 +38,16 @@
     <thumbnail src="oh-tannenbaum/thumbnail.png"/>
     <tags>
       <tag>christmas</tag>
-      <tag>folk-song</tag>
+    </tags>
+  </composition>
+
+  <composition id="silent-night" path="silent-night">
+    <title xml:lang="de">Stille Nacht</title>
+    <title xml:lang="en">Silent Night</title>
+    <composer>Franz Xaver Gruber</composer>
+    <thumbnail src="silent-night/thumbnail.png"/>
+    <tags>
+      <tag>christmas</tag>
     </tags>
   </composition>
 

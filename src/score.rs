@@ -363,6 +363,49 @@ mod tests {
     }
 
     #[test]
+    fn parses_silent_night_beginner() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/silent-night/beginner");
+        let full = load(&root.join("full.musicxml")).unwrap();
+        // 20 measures, bars 9–12 repeated: 24 bars of 3/4 at ♩ = 80.
+        assert_eq!(full.measures.len(), 24);
+        assert!((full.duration - 24.0 * 3.0 * 0.75).abs() < 1e-6);
+        let b = load(&root.join("02-part-B.musicxml")).unwrap();
+        assert_eq!(b.measures.len(), 8);
+        // B flats in both hands, final chord one octave up (8va): F5 + A5.
+        assert!(full.notes.iter().any(|n| n.pitch == 70 && n.staff == 1));
+        assert!(full.notes.iter().any(|n| n.pitch == 58 && n.staff == 2));
+        let last: Vec<u8> = full.notes.iter().filter(|n| n.start == full.notes.last().unwrap().start && n.staff == 1).map(|n| n.pitch).collect();
+        assert_eq!(last, [77, 81]);
+        assert!(full.notes.iter().all(|n| n.finger.is_some()));
+        for f in ["01-part-A.musicxml", "03-part-C.musicxml"] {
+            assert!(!load(&root.join(f)).unwrap().notes.is_empty(), "{f}");
+        }
+    }
+
+    #[test]
+    fn parses_silent_night_prep_and_intermediate() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/silent-night");
+        let prep = load(&dir.join("prep/full.musicxml")).unwrap();
+        assert_eq!(prep.measures.len(), 24);
+        // Tied F3 in bars 19–20 is one note of two bars.
+        let f3: Vec<_> = prep.notes.iter().filter(|n| n.pitch == 53).collect();
+        assert_eq!(f3.len(), 1);
+        assert!((f3[0].end - f3[0].start - 2.0 * 3.0 * 0.75).abs() < 1e-6);
+
+        // 6/8 with dotted rhythms: 12 bars of 6 eighths at ♩ = 80.
+        let im = load(&dir.join("intermediate/full.musicxml")).unwrap();
+        assert_eq!(im.measures.len(), 12);
+        assert!((im.duration - 12.0 * 3.0 * 0.75).abs() < 1e-6);
+        assert!(im.notes.iter().any(|n| n.pitch == 56)); // G#3
+        assert!(im.notes.iter().any(|n| n.pitch == 58)); // Bb3
+        assert!(im.notes.iter().filter(|n| n.staff == 1).all(|n| n.finger.is_some()));
+        for f in ["01-part-A", "02-part-B", "03-part-C"] {
+            let s = load(&dir.join(format!("intermediate/{f}.musicxml"))).unwrap();
+            assert_eq!(s.measures.len(), 4, "{f}");
+        }
+    }
+
+    #[test]
     fn repeats_ties_and_chords() {
         let xml = r#"<score-partwise><part id="P1">
           <measure number="1"><attributes><divisions>1</divisions></attributes>
