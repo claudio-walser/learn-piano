@@ -466,6 +466,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_zauberfloete_with_short_last_bar() {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/die-zauberfloete/intermediate/full.musicxml");
+        let s = load(&p).unwrap();
+        // One-beat pickup (numbered 1 like the PDF), 23 full bars, last bar of 3 beats; ♩ = 108.
+        assert_eq!(s.measures.len(), 25);
+        assert_eq!(s.measure_numbers[..2], ["1", "2"]);
+        assert!((s.duration - (1.0 + 23.0 * 4.0 + 3.0) * 60.0 / 108.0).abs() < 1e-6);
+        assert_eq!((s.notes[0].pitch, s.notes[1].pitch), (74, 71)); // D5 B4
+        assert_eq!(s.notes.iter().map(|n| n.pitch).max(), Some(86)); // D6
+        assert_eq!(s.notes.iter().map(|n| n.pitch).min(), Some(48)); // C3
+        assert!(s.notes.iter().all(|n| n.finger.is_some()));
+    }
+
+    #[test]
     fn parses_duet_parts_and_voltas() {
         let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/happy-birthday/duet/full.musicxml");
         let s = load(&p).unwrap();

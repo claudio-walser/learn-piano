@@ -20,3 +20,4 @@ composition-happy-birthday = Happy Birthday
 composition-fuer-elise = Für Elise
 composition-ode-to-joy = Ode an die Freude
 composition-all-my-little-ducklings = Alle meine Entchen
+composition-die-zauberfloete = Die Zauberflöte: Das klinget so herrlich

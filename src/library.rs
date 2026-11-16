@@ -443,7 +443,7 @@ mod tests {
         assert!(lib.categories().contains(&"christmas".to_string()));
         let ids = |v: Vec<usize>| v.into_iter().map(|i| lib.compositions[i].id.as_str()).collect::<Vec<_>>();
         let all = ids(lib.visible(None, ""));
-        assert_eq!(all[..2], ["all-my-little-ducklings", "fuer-elise"]);
+        assert_eq!(all[..3], ["all-my-little-ducklings", "die-zauberfloete", "fuer-elise"]);
         assert_eq!(ids(lib.visible(Some("christmas"), "")), ["oh-christmas-tree", "silent-night"]);
         assert_eq!(ids(lib.visible(None, "fur")), ["fuer-elise"]);
         assert_eq!(ids(lib.visible(None, "beethoven ode")), ["ode-to-joy"]);

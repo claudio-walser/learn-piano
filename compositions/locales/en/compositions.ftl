@@ -22,3 +22,4 @@ composition-happy-birthday = Happy Birthday
 composition-fuer-elise = Für Elise
 composition-ode-to-joy = Ode to Joy
 composition-all-my-little-ducklings = All My Little Ducklings
+composition-die-zauberfloete = The Magic Flute: Das klinget so herrlich
