@@ -21,7 +21,7 @@ use i18n::{Lang, Strings};
 use keyboard::{is_black, KeyLayout, KeyboardSize};
 use library::{Lesson, Library};
 use midi::{Midi, MidiEvent};
-use practice::{Hand, Hands, Judge, Mode, Practice, Summary};
+use practice::{Hand, Hands, Judge, Mode, Players, Practice, Summary};
 use progress::Progress;
 use ui::*;
 
@@ -274,7 +274,7 @@ impl App {
             240 => shot("3-player-wait.png"),
             241 => {
                 if let Screen::Player(p) = &mut self.screen {
-                    p.practice.configure(Mode::Realtime, Hands::Right, &self.audio);
+                    p.practice.configure(Mode::Realtime, Hands::Right, p.practice.players, &self.audio);
                     p.practice.t = 3.0;
                 }
             }
@@ -332,7 +332,7 @@ impl App {
         }
         let st = &self.progress.settings;
         let range = keyboard::range_for(st.keyboard, pitches.into_iter());
-        let practice = Practice::new(score, st.mode, st.hands, st.tempo);
+        let practice = Practice::new(score, st.mode, st.hands, st.players, st.tempo);
         self.screen = Screen::Player(Box::new(Player {
             comp: c,
             level: l,
@@ -382,7 +382,7 @@ impl App {
         if ptr.dragging() {
             self.scroll -= ptr.delta.y;
         }
-        self.scroll = (self.scroll - mouse_wheel().1 * 0.5).clamp(0.0, max_scroll);
+        self.scroll = (self.scroll - wheel_notches() * 60.0).clamp(0.0, max_scroll);
 
         let grid_w = cols as f32 * cw + (cols - 1) as f32 * gap;
         let x0 = (w - grid_w) / 2.0;
@@ -471,18 +471,29 @@ impl App {
         y += 72.0 * sc;
         text_center(&f.regular, s.choose_difficulty, w / 2.0, y, 30.0 * sc, TEXT);
 
-        let n = comp.levels.len().max(1) as f32;
+        // Duets sit apart from the difficulty steps: half a slot of extra space.
+        let gap_before = |li: usize| {
+            let l = &comp.levels;
+            if li > 0 && l[li].is_duet && !l[li - 1].is_duet { 0.5 } else { 0.0 }
+        };
+        let slot: Vec<f32> = (0..comp.levels.len())
+            .scan(0.0, |acc, li| {
+                *acc += gap_before(li);
+                Some(li as f32 + *acc)
+            })
+            .collect();
+        let n = slot.last().map_or(1.0, |&s| s + 1.0);
         let below = 92.0 * sc; // room for name, stars and lesson count
         let avail_h = h - (y + 40.0 * sc) - below;
         let r = (96.0 * sc).min(w / (n * 2.5)).min(avail_h / 2.0).max(30.0);
         let cy = y + 36.0 * sc + r;
         let spacing = r * 2.3;
         let recommended = comp.levels.iter().enumerate().position(|(li, lv)| {
-            self.progress.stars(&lesson_key(lib, c, li, lv.lessons.last().unwrap())) == 0
+            !lv.is_duet && self.progress.stars(&lesson_key(lib, c, li, lv.lessons.last().unwrap())) == 0
         });
 
         for (li, level) in comp.levels.iter().enumerate() {
-            let cx = w / 2.0 + (li as f32 - (n - 1.0) / 2.0) * spacing;
+            let cx = w / 2.0 + (slot[li] - (n - 1.0) / 2.0) * spacing;
             let col = difficulty_color(level.difficulty_index);
             let name = lib.difficulty_title(level, lang);
             let hot = ptr.down && ptr.pos.distance(vec2(cx, cy)) <= r && ptr.moved < 18.0;
@@ -565,15 +576,32 @@ impl App {
             let paused = !p.practice.paused;
             p.practice.set_paused(paused, &self.audio);
         }
+        // Seeking: wheel up / drag down moves the notes down, i.e. forward in time.
+        // It pauses, so the spot can be looked at; a tap plays on from there.
+        if !modal {
+            let pps = wf.h as f64 / LOOKAHEAD;
+            let mut dt = wheel_notches() as f64 * 60.0 / pps;
+            if ptr.dragging() && wf.contains(ptr.press_pos) {
+                dt += ptr.delta.y as f64 / pps;
+            }
+            if dt != 0.0 {
+                p.practice.set_paused(true, &self.audio);
+                let t = p.practice.t + dt;
+                p.practice.seek(t, &self.audio);
+                p.last_run = None;
+            }
+        }
 
         p.practice.update(get_frame_time().min(0.1), &self.audio);
         if p.practice.finished && p.result.is_none() {
             let sum = p.practice.summary();
-            if p.practice.mode != Mode::Listen {
+            // A run with seeking is no real attempt: no stars, no fireworks.
+            let counts = p.practice.mode != Mode::Listen && !p.practice.seeked;
+            if counts {
                 let key = lesson_key(lib, p.comp, p.level, &level.lessons[p.lesson]);
                 self.progress.record(key, sum.stars, sum.percent);
             }
-            if p.practice.mode != Mode::Listen && sum.percent > 90.0 {
+            if counts && sum.percent > 90.0 {
                 p.fireworks = Some(Fireworks::new());
             }
             if self.progress.settings.repeat {
@@ -625,7 +653,13 @@ impl App {
                 text_left(&f.bold, &txt, r.x + 116.0, r.y + 18.0, 18.0, TEXT);
             }
         }
-        if p.practice.paused {
+        if p.practice.paused && p.practice.seeked {
+            // Seeking: keep the notes visible, only a small hint.
+            let tw = text_width(&f.regular, s.paused, 16.0) + 28.0;
+            let r = Rect::new(w / 2.0 - tw / 2.0, wf.y + wf.h - 52.0, tw, 32.0);
+            rounded_rect(r, 16.0, alpha(BG, 0.85));
+            text_center(&f.regular, s.paused, r.x + r.w / 2.0, r.y + 16.0, 16.0, TEXT);
+        } else if p.practice.paused {
             draw_rectangle(wf.x, wf.y, wf.w, wf.h, alpha(BLACK, 0.45));
             let c = wf.center();
             draw_circle(c.x, c.y, 54.0, alpha(WHITE, 0.15));
@@ -681,7 +715,10 @@ impl App {
         text_left(&f.regular, &sub, 80.0, 50.0, fit_size(&f.regular, &sub, 17.0, title_w), diff_col);
 
         // Control row
-        let total = 380.0 + 320.0 + 250.0 + 3.0 * 52.0 + 5.0 * 16.0;
+        // Duets get a fourth control: who plays which part.
+        let duet = p.practice.score.is_duet();
+        let players_w = if duet { 380.0 + 16.0 } else { 0.0 };
+        let total = 380.0 + players_w + 320.0 + 250.0 + 3.0 * 52.0 + 5.0 * 16.0;
         let k = ((w - 32.0) / total).min(1.0);
         let cy = top_h + 6.0;
         let mut x = 16.0;
@@ -691,6 +728,7 @@ impl App {
             r
         };
         let r_mode = seg(380.0);
+        let r_players = if duet { Some(seg(380.0)) } else { None };
         let r_hands = seg(320.0);
         let r_tempo = seg(250.0);
         let fs = 18.0 * k.max(0.8);
@@ -700,6 +738,14 @@ impl App {
         if let Some(i) = segmented(f, ptr, r_mode, &[s.mode_wait, s.mode_realtime, s.mode_listen], mi, TEXT, fs) {
             self.progress.settings.mode = modes[i];
             changed = true;
+        }
+        if let Some(r) = r_players {
+            let players = [Players::Student, Players::Teacher, Players::Together];
+            let pi = players.iter().position(|&x| x == p.practice.players).unwrap_or(0);
+            if let Some(i) = segmented(f, ptr, r, &s.players, pi, TEXT, fs) {
+                self.progress.settings.players = players[i];
+                changed = true;
+            }
         }
         let hands = [Hands::Left, Hands::Right, Hands::Both];
         let hi = hands.iter().position(|&x| x == p.practice.hands).unwrap_or(2);
@@ -720,7 +766,7 @@ impl App {
         }
         if changed {
             let st = &self.progress.settings;
-            p.practice.configure(st.mode, st.hands, &self.audio);
+            p.practice.configure(st.mode, st.hands, st.players, &self.audio);
             p.result = None;
             p.last_run = None;
             self.progress.save();
@@ -786,10 +832,14 @@ impl App {
         let pps = wf.h as f64 / LOOKAHEAD;
         let y_hit = (wf.y + wf.h) as f64;
         let t = pr.t;
-        for &m in &pr.score.measures {
+        let mut bar_numbers: Vec<(&str, f32)> = vec![];
+        for (k, &m) in pr.score.measures.iter().enumerate() {
             let y = (y_hit - (m - t) * pps) as f32;
             if y >= wf.y && y <= wf.y + wf.h {
                 draw_line(wf.x, y, wf.x + wf.w, y, 1.0, alpha(WHITE, 0.10));
+                if let Some(num) = pr.score.measure_numbers.get(k).filter(|n| !n.is_empty() && *n != "0") {
+                    bar_numbers.push((num, y));
+                }
             }
         }
 
@@ -845,6 +895,9 @@ impl App {
         draw_rectangle(wf.x, wf.y + wf.h - 3.0, wf.w, 3.0, alpha(WHITE, 0.25));
         for (fg, x, y, size) in labels {
             text_center(&self.fonts.bold, &fg.to_string(), x, y, size, BG);
+        }
+        for (num, y) in bar_numbers {
+            text_left(&self.fonts.regular, num, wf.x + 8.0, y - 10.0, 14.0, alpha(WHITE, 0.4));
         }
     }
 

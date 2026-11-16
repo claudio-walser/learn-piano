@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::i18n::Lang;
 use crate::keyboard::KeyboardSize;
-use crate::practice::{Hands, Mode};
+use crate::practice::{Hands, Mode, Players};
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
@@ -18,6 +18,8 @@ pub struct Settings {
     pub fullscreen: bool,
     pub mode: Mode,
     pub hands: Hands,
+    /// Who plays a duet.
+    pub players: Players,
     pub tempo: f64,
     /// On-screen keyboard size; `Auto` fits it to the lesson.
     pub keyboard: KeyboardSize,
@@ -33,6 +35,7 @@ impl Default for Settings {
             fullscreen: false,
             mode: Mode::Wait,
             hands: Hands::Both,
+            players: Players::Student,
             tempo: 1.0,
             keyboard: KeyboardSize::Auto,
             repeat: false,

@@ -42,7 +42,7 @@ compositions.xml              Liste der Stücke und Schwierigkeitsstufen
 sound-fonts/default.sf2       Klang
 compositions/<stück>/
   thumbnail.png
-  <schwierigkeit>/            z.B. beginner – muss in compositions.xml definiert sein
+  <schwierigkeit>/            z.B. prep, beginner, duet – muss in compositions.xml definiert sein
     01-part-A.musicxml        Lektionen (optional), in Namensreihenfolge
     02-part-B.musicxml
     full.musicxml             ganzes Stück (Pflicht)
@@ -52,12 +52,18 @@ compositions/<stück>/
 Notenzeile 1 ist die rechte Hand, Notenzeile 2 die linke. Fingersätze werden aus
 `<fingering>` gelesen.
 
+**Duette:** Eine Stufe mit `kind="duet"` in `compositions.xml` ist keine Schwierigkeit,
+sondern ein Duett. Sie wird in der Auswahl abgesetzt angezeigt. Die MusicXML enthält zwei
+`<part>`s: den ersten für den Schüler, den zweiten für den Lehrer.
+
 ## Bedienung
 
 - **Warten** (Standard): Der Wasserfall hält an, bis die richtigen Tasten gedrückt sind.
 - **Echtzeit**: Die Noten laufen im Tempo durch; Treffer und Timing werden bewertet.
 - **Anhören**: Die App spielt das Stück vor.
 - **Links / Rechts / Beide**: Die nicht geübte Hand spielt die App mit.
+- **Schüler / Lehrer / Zu zweit** (nur bei Duetten): Den anderen Part spielt die App.
+  Bei „Zu zweit“ spielt und bewertet die App beide Parts auf einem Keyboard.
 - **50 / 75 / 100 %**: Tempo.
 - Tippen auf den Wasserfall pausiert, `Esc` geht zurück.
 

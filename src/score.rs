@@ -2,6 +2,7 @@
 //!
 //! Supports multiple voices/staves (backup/forward), chords, ties, tempo
 //! changes, repeats with voltas, and fingering. Grace and cue notes are skipped.
+//! Several `<part>`s make a duet: part 0 is the student, part 1 the teacher.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -14,9 +15,11 @@ pub struct Note {
     /// Seconds at 100 % tempo.
     pub start: f64,
     pub end: f64,
-    /// 1 = upper staff (right hand), 2 = lower staff (left hand).
+    /// Staff within its part: 1 = upper staff (right hand), 2 = lower staff (left hand).
     pub staff: u8,
     pub finger: Option<u8>,
+    /// Index of the `<part>` (0 = first). More than one part = duet.
+    pub part: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -26,8 +29,19 @@ pub struct Score {
     pub notes: Vec<Note>,
     /// Start time of every measure in playback order (for bar lines).
     pub measures: Vec<f64>,
+    /// Printed number of each entry in `measures` (repeats show the same number again).
+    pub measure_numbers: Vec<String>,
     pub duration: f64,
+    /// Staves per part (the most of any part).
     pub staves: u8,
+    /// Part names from the part list, in order.
+    pub parts: Vec<String>,
+}
+
+impl Score {
+    pub fn is_duet(&self) -> bool {
+        self.parts.len() > 1
+    }
 }
 
 struct RawNote {
@@ -35,6 +49,7 @@ struct RawNote {
     dur: f64,
     pitch: u8,
     staff: u8,
+    part: u8,
     finger: Option<u8>,
     tie_start: bool,
     tie_stop: bool,
@@ -48,6 +63,7 @@ struct Measure {
     repeat_forward: bool,
     repeat_backward: Option<u32>,
     ending: Option<Vec<u32>>,
+    number: String,
 }
 
 fn child<'a, 'i>(n: Node<'a, 'i>, name: &str) -> Option<Node<'a, 'i>> {
@@ -116,10 +132,17 @@ pub fn parse(text: &str) -> Result<Score, String> {
         .map(|t| t.trim().to_string());
 
     let mut measures: Vec<Measure> = Vec::new();
-    let mut staff_base: u8 = 0;
-    let mut total_staves: u8 = 0;
+    let mut max_staves: u8 = 0;
+    let mut parts: Vec<String> = Vec::new();
 
-    for part in root.children().filter(|n| n.has_tag_name("part")) {
+    for (pi, part) in root.children().filter(|n| n.has_tag_name("part")).enumerate() {
+        let id = part.attribute("id").unwrap_or("");
+        let name = root
+            .descendants()
+            .find(|n| n.has_tag_name("score-part") && n.attribute("id") == Some(id))
+            .and_then(|n| child_text(n, "part-name"))
+            .unwrap_or(id);
+        parts.push(name.to_string());
         let mut divisions = 1.0;
         let mut part_staves: u8 = 1;
         let mut ending_state: Option<Vec<u32>> = None;
@@ -129,6 +152,9 @@ pub fn parse(text: &str) -> Result<Score, String> {
                 measures.push(Measure::default());
             }
             let meas = &mut measures[mi];
+            if meas.number.is_empty() {
+                meas.number = m.attribute("number").unwrap_or("").to_string();
+            }
             let mut cursor = 0.0_f64;
             let mut max_cursor = 0.0_f64;
             let mut last_start = 0.0_f64;
@@ -171,7 +197,8 @@ pub fn parse(text: &str) -> Result<Score, String> {
                                 start,
                                 dur,
                                 pitch: p,
-                                staff: staff_base + staff.max(1),
+                                staff: staff.max(1),
+                                part: pi as u8,
                                 finger,
                                 tie_start: ties.contains(&"start"),
                                 tie_stop: ties.contains(&"stop"),
@@ -233,8 +260,7 @@ pub fn parse(text: &str) -> Result<Score, String> {
                 meas.ending = cur_ending;
             }
         }
-        staff_base += part_staves;
-        total_staves += part_staves;
+        max_staves = max_staves.max(part_staves);
     }
 
     // Playback order with repeats unrolled.
@@ -306,10 +332,10 @@ pub fn parse(text: &str) -> Result<Score, String> {
     // Merge ties and convert to seconds.
     notes_q.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.pitch.cmp(&b.pitch)));
     let mut out: Vec<Note> = Vec::with_capacity(notes_q.len());
-    let mut open: HashMap<(u8, u8), usize> = HashMap::new();
+    let mut open: HashMap<(u8, u8, u8), usize> = HashMap::new();
     let mut ends_q: Vec<f64> = Vec::with_capacity(notes_q.len());
     for r in &notes_q {
-        let key = (r.pitch, r.staff);
+        let key = (r.pitch, r.part, r.staff);
         if r.tie_stop {
             if let Some(&idx) = open.get(&key) {
                 ends_q[idx] = ends_q[idx].max(r.start + r.dur);
@@ -319,7 +345,7 @@ pub fn parse(text: &str) -> Result<Score, String> {
                 continue;
             }
         }
-        out.push(Note { pitch: r.pitch, start: r.start, end: 0.0, staff: r.staff, finger: r.finger });
+        out.push(Note { pitch: r.pitch, start: r.start, end: 0.0, staff: r.staff, finger: r.finger, part: r.part });
         ends_q.push(r.start + r.dur);
         if r.tie_start {
             open.insert(key, out.len() - 1);
@@ -337,8 +363,10 @@ pub fn parse(text: &str) -> Result<Score, String> {
         title,
         notes: out,
         measures: measure_q.into_iter().map(to_sec).collect(),
+        measure_numbers: order.iter().map(|&mi| measures[mi].number.clone()).collect(),
         duration,
-        staves: total_staves.max(1),
+        staves: max_staves.max(1),
+        parts,
     })
 }
 
@@ -380,6 +408,40 @@ mod tests {
         for f in ["01-part-A.musicxml", "03-part-C.musicxml"] {
             assert!(!load(&root.join(f)).unwrap().notes.is_empty(), "{f}");
         }
+    }
+
+    #[test]
+    fn parses_happy_birthday_with_pickup() {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/happy-birthday/beginner/full.musicxml");
+        let s = load(&p).unwrap();
+        // One-beat pickup + 8 bars of 3/4 at ♩ = 112.
+        assert_eq!(s.measures.len(), 9);
+        let beat = 60.0 / 112.0;
+        assert!((s.duration - 25.0 * beat).abs() < 1e-6);
+        assert_eq!(s.notes[0].pitch, 55); // G3 on the pickup, left hand
+        assert_eq!(s.notes[0].staff, 2);
+        assert!((s.measures[1] - beat).abs() < 1e-6);
+    }
+
+    #[test]
+    fn parses_duet_parts_and_voltas() {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("compositions/happy-birthday/duet/full.musicxml");
+        let s = load(&p).unwrap();
+        assert!(s.is_duet());
+        assert_eq!(s.parts, ["Student", "Teacher"]);
+        assert_eq!(s.staves, 2);
+        // Pickup, bars 1–2, 3–10 (1st ending), again 3–9, 11 (2nd ending), 12.
+        assert_eq!(s.measures.len(), 1 + 2 + 8 + 7 + 2);
+        let nums: Vec<&str> = s.measure_numbers.iter().map(String::as_str).collect();
+        assert_eq!(nums[..12], ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "3"]);
+        assert_eq!(nums[17..], ["9", "11", "12"]);
+        // Student two octaves up (G6 = 91), teacher in the middle; staves are per part.
+        assert_eq!(s.notes.iter().filter(|n| n.part == 0).map(|n| n.pitch).max(), Some(91));
+        assert!(s.notes.iter().filter(|n| n.part == 1).all(|n| n.pitch < 72));
+        assert!(s.notes.iter().all(|n| n.staff == 1 || n.staff == 2));
+        // "And many more!" ends on the student's Bb5.
+        assert!(s.notes.iter().any(|n| n.part == 0 && n.pitch == 82));
+        assert!(s.notes.iter().all(|n| n.finger.is_some()), "every note of both parts has a finger");
     }
 
     #[test]

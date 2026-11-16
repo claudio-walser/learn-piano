@@ -63,6 +63,13 @@ const REF_H: f32 = 800.0;
 
 static SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0f32
 
+/// Mouse wheel movement this frame in notches (+ = up). X11 reports ±1 per
+/// notch, Wayland about 10–15 per notch.
+pub fn wheel_notches() -> f32 {
+    let y = mouse_wheel().1;
+    if y.abs() > 2.0 { y / 10.0 } else { y }
+}
+
 pub fn scale() -> f32 {
     f32::from_bits(SCALE.load(Ordering::Relaxed))
 }

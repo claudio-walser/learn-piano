@@ -23,6 +23,8 @@ impl Localized {
 pub struct DifficultyDef {
     pub id: String,
     pub title: Localized,
+    /// `kind="duet"`: not a difficulty step but a duet arrangement.
+    pub duet: bool,
 }
 
 pub struct Lesson {
@@ -38,6 +40,7 @@ pub struct Level {
     pub difficulty: String,
     /// Index into [`Library::difficulties`] (used for colors and titles).
     pub difficulty_index: usize,
+    pub is_duet: bool,
     /// Part lessons in order, followed by `full.musicxml` as last lesson.
     pub lessons: Vec<Lesson>,
 }
@@ -109,6 +112,7 @@ impl Library {
                 Some(DifficultyDef {
                     id: n.attribute("id")?.to_string(),
                     title: localized(n, "title"),
+                    duet: n.attribute("kind") == Some("duet"),
                 })
             })
             .collect();
@@ -138,7 +142,7 @@ impl Library {
             let levels = difficulties
                 .iter()
                 .enumerate()
-                .filter_map(|(i, d)| scan_level(&dir.join(&d.id), &d.id, i))
+                .filter_map(|(i, d)| scan_level(&dir.join(&d.id), &d.id, i, d.duet))
                 .collect();
             compositions.push(Composition {
                 id: id.to_string(),
@@ -163,7 +167,7 @@ impl Library {
 
 /// A level exists when `<dir>/full.musicxml` exists. Files named
 /// `<digits>-part*.musicxml` next to it are the lessons, in name order.
-fn scan_level(dir: &Path, id: &str, index: usize) -> Option<Level> {
+fn scan_level(dir: &Path, id: &str, index: usize, is_duet: bool) -> Option<Level> {
     let full = dir.join("full.musicxml");
     if !full.is_file() {
         return None;
@@ -194,7 +198,7 @@ fn scan_level(dir: &Path, id: &str, index: usize) -> Option<Level> {
         .collect();
     lessons.push(Lesson { path: full, stem: "full".into(), label: String::new(), is_full: true });
 
-    Some(Level { difficulty: id.to_string(), difficulty_index: index, lessons })
+    Some(Level { difficulty: id.to_string(), difficulty_index: index, is_duet, lessons })
 }
 
 #[cfg(test)]
@@ -204,7 +208,8 @@ mod tests {
     #[test]
     fn loads_bundled_library() {
         let lib = Library::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
-        assert_eq!(lib.difficulties.len(), 4);
+        assert_eq!(lib.difficulties.len(), 5);
+        assert!(lib.difficulties.iter().any(|d| d.id == "duet" && d.duet));
         let c = &lib.compositions[0];
         assert_eq!(c.composer.as_deref(), Some("Ernst Anschütz"));
         assert!(c.thumbnail.as_ref().unwrap().is_file(), "{:?}", c.thumbnail);

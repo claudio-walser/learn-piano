@@ -34,6 +34,28 @@ pub enum Hands {
     Both,
 }
 
+/// Who plays a duet. Ignored for scores with a single part.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Players {
+    /// The player takes part 0, the app plays the teacher part.
+    Student,
+    /// The player takes part 1, the app plays the student part.
+    Teacher,
+    /// Two people at one keyboard: every part is played and judged.
+    Together,
+}
+
+impl Players {
+    fn plays(self, n: &Note, duet: bool) -> bool {
+        match self {
+            _ if !duet => true,
+            Players::Student => n.part == 0,
+            Players::Teacher => n.part == 1,
+            Players::Together => true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hand {
     Left,
@@ -71,6 +93,7 @@ pub struct Practice {
     pub score: Score,
     pub mode: Mode,
     pub hands: Hands,
+    pub players: Players,
     pub tempo: f64,
     /// Current position in score seconds.
     pub t: f64,
@@ -88,17 +111,20 @@ pub struct Practice {
     pub wrong: u32,
     pub paused: bool,
     pub finished: bool,
+    /// Jumped around with [`Practice::seek`]: the run does not count as an attempt.
+    pub seeked: bool,
     pub held: [bool; 128],
     pub wrong_flash: [f32; 128],
     pub hit_flash: [f32; 128],
 }
 
 impl Practice {
-    pub fn new(score: Score, mode: Mode, hands: Hands, tempo: f64) -> Practice {
+    pub fn new(score: Score, mode: Mode, hands: Hands, players: Players, tempo: f64) -> Practice {
         let mut p = Practice {
             score,
             mode,
             hands,
+            players,
             tempo,
             t: -LEAD_IN,
             judge: Vec::new(),
@@ -113,6 +139,7 @@ impl Practice {
             wrong: 0,
             paused: false,
             finished: false,
+            seeked: false,
             held: [false; 128],
             wrong_flash: [0.0; 128],
             hit_flash: [0.0; 128],
@@ -126,14 +153,15 @@ impl Practice {
     }
 
     fn reset(&mut self) {
-        let staves = self.score.staves;
-        let (mode, hands) = (self.mode, self.hands);
+        let (staves, duet) = (self.score.staves, self.score.is_duet());
+        let (mode, hands, players) = (self.mode, self.hands, self.players);
         self.is_user = self
             .score
             .notes
             .iter()
             .map(|n| {
                 mode != Mode::Listen
+                    && players.plays(n, duet)
                     && match hands {
                         Hands::Both => true,
                         Hands::Right => hand_of(n, staves) == Hand::Right,
@@ -154,6 +182,7 @@ impl Practice {
         self.wrong = 0;
         self.paused = false;
         self.finished = false;
+        self.seeked = false;
         self.wrong_flash = [0.0; 128];
         self.hit_flash = [0.0; 128];
         self.recompute_group();
@@ -164,9 +193,10 @@ impl Practice {
         self.reset();
     }
 
-    pub fn configure(&mut self, mode: Mode, hands: Hands, audio: &Audio) {
+    pub fn configure(&mut self, mode: Mode, hands: Hands, players: Players, audio: &Audio) {
         self.mode = mode;
         self.hands = hands;
+        self.players = players;
         self.restart(audio);
     }
 
@@ -177,6 +207,29 @@ impl Practice {
                 audio.note_off(AUTO_CHANNEL, p);
             }
         }
+    }
+
+    /// Jumps to score time `t`. Notes from there on are open again; autoplay
+    /// continues from there.
+    pub fn seek(&mut self, t: f64, audio: &Audio) {
+        for (_, p) in self.sounding.drain(..) {
+            audio.note_off(AUTO_CHANNEL, p);
+        }
+        let t = t.clamp(-LEAD_IN, self.score.duration);
+        let notes = &self.score.notes;
+        let from = t - CHORD_EPS;
+        for (i, n) in notes.iter().enumerate() {
+            if n.start >= from {
+                self.judge[i] = Judge::Pending;
+            }
+        }
+        self.next_user = self.user_idx.partition_point(|&i| notes[i].start < from);
+        self.next_auto = self.auto_idx.partition_point(|&i| notes[i].start < t);
+        self.t = t;
+        self.seeked = true;
+        self.finished = false;
+        self.waiting = false;
+        self.recompute_group();
     }
 
     pub fn fraction(&self) -> f32 {
@@ -360,20 +413,22 @@ mod tests {
     use super::*;
 
     fn score() -> Score {
-        let n = |pitch, start: f64, staff| Note { pitch, start, end: start + 0.5, staff, finger: None };
+        let n = |pitch, start: f64, staff| Note { pitch, start, end: start + 0.5, staff, finger: None, part: 0 };
         Score {
             title: None,
             notes: vec![n(60, 0.0, 1), n(48, 0.0, 2), n(62, 1.0, 1)],
             measures: vec![0.0],
+            measure_numbers: vec!["1".into()],
             duration: 1.5,
             staves: 2,
+            parts: vec!["Piano".into()],
         }
     }
 
     #[test]
     fn wait_mode_waits_for_right_keys() {
         let audio = Audio::start(None);
-        let mut p = Practice::new(score(), Mode::Wait, Hands::Right, 1.0);
+        let mut p = Practice::new(score(), Mode::Wait, Hands::Right, Players::Student, 1.0);
         for _ in 0..400 {
             p.update(0.01, &audio);
         }
@@ -396,9 +451,49 @@ mod tests {
     }
 
     #[test]
+    fn duet_players_choose_the_part() {
+        let mut sc = score();
+        sc.notes[1].part = 1; // the left-hand C3 belongs to the teacher
+        sc.parts.push("Teacher".into());
+        let user = |players, hands| Practice::new(sc.clone(), Mode::Wait, hands, players, 1.0).is_user;
+        assert_eq!(user(Players::Student, Hands::Both), [true, false, true]);
+        assert_eq!(user(Players::Teacher, Hands::Both), [false, true, false]);
+        assert_eq!(user(Players::Together, Hands::Both), [true, true, true]);
+        assert_eq!(user(Players::Together, Hands::Right), [true, false, true]);
+        // Single-part scores ignore the choice.
+        let solo = Practice::new(score(), Mode::Wait, Hands::Both, Players::Teacher, 1.0);
+        assert_eq!(solo.is_user, [true, true, true]);
+    }
+
+    #[test]
+    fn seek_reopens_notes_and_moves_autoplay() {
+        let audio = Audio::start(None);
+        let mut p = Practice::new(score(), Mode::Wait, Hands::Right, Players::Student, 1.0);
+        p.seek(0.5, &audio);
+        assert!(p.seeked);
+        // Waits for the D at 1.0 next, the C at 0.0 is behind us.
+        for _ in 0..100 {
+            p.update(0.01, &audio);
+        }
+        assert!(p.waiting);
+        assert_eq!(p.t, 1.0);
+        assert_eq!(p.group, [2]);
+        // Back to the start: the C is due again.
+        p.key_down(62);
+        p.seek(-1.0, &audio);
+        assert_eq!(p.judge[2], Judge::Pending);
+        for _ in 0..200 {
+            p.update(0.01, &audio);
+        }
+        assert_eq!(p.group, [0]);
+        p.restart(&audio);
+        assert!(!p.seeked);
+    }
+
+    #[test]
     fn realtime_judges_timing_and_misses() {
         let audio = Audio::start(None);
-        let mut p = Practice::new(score(), Mode::Realtime, Hands::Both, 1.0);
+        let mut p = Practice::new(score(), Mode::Realtime, Hands::Both, Players::Student, 1.0);
         while p.t < 0.05 {
             p.update(0.01, &audio);
         }

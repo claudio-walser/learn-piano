@@ -27,6 +27,13 @@
     <title xml:lang="de">Experte</title>
     <title xml:lang="en">Expert</title>
   </difficulty>
+
+  <!-- Not a difficulty step: a duet (student part + teacher part in one MusicXML).
+       Shown apart from the difficulties; in the player you choose who plays which part. -->
+  <difficulty id="duet" kind="duet">
+    <title xml:lang="de">Duett</title>
+    <title xml:lang="en">Duet</title>
+  </difficulty>
 </difficulties>
 
 <compositions>
@@ -48,6 +55,16 @@
     <thumbnail src="silent-night/thumbnail.png"/>
     <tags>
       <tag>christmas</tag>
+    </tags>
+  </composition>
+
+  <composition id="happy-birthday" path="happy-birthday">
+    <title xml:lang="de">Happy Birthday</title>
+    <title xml:lang="en">Happy Birthday</title>
+    <composer>Patty und Mildred Hill</composer>
+    <thumbnail src="happy-birthday/thumbnail.png"/>
+    <tags>
+      <tag>birthday</tag>
     </tags>
   </composition>
 
