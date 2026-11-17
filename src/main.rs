@@ -175,9 +175,11 @@ struct App {
     /// Dev aid: `LEARN_PIANO_SHOTS=<dir>` walks through all screens, saves PNGs and quits.
     shots: Option<(std::path::PathBuf, u32)>,
     scroll: f32,
-    /// Dashboard filter: search text, selected category and the carousel's scroll offset.
+    /// Dashboard filter: search text, selected difficulty (index into the library's
+    /// difficulties), selected category and the carousel's scroll offset.
     search: String,
     search_focus: bool,
+    difficulty: Option<usize>,
     category: Option<String>,
     category_scroll: f32,
     show_settings: bool,
@@ -308,6 +310,7 @@ impl App {
             scroll: 0.0,
             search: String::new(),
             search_focus: false,
+            difficulty: None,
             category: None,
             category_scroll: 0.0,
             show_settings: false,
@@ -502,12 +505,15 @@ impl App {
         let s = self.s();
         let (w, h) = (vw(), vh());
         let header = 96.0;
-        let bar = Rect::new(0.0, header, w, 64.0);
-        let top = bar.y + bar.h;
         let Some(lib) = &self.lib else { return None };
-        let visible = lib.visible(self.category.as_deref(), &self.search);
+        // Difficulty row only when there is something to choose from.
+        let diffs = lib.used_difficulties();
+        let diff_bar = Rect::new(0.0, header, w, if diffs.len() > 1 { 56.0 } else { 0.0 });
+        let bar = Rect::new(0.0, diff_bar.y + diff_bar.h, w, 64.0);
+        let top = bar.y + bar.h;
+        let visible = lib.visible(self.difficulty, self.category.as_deref(), &self.search);
 
-        // ---- pieces: sorted by title, filtered by category and search
+        // ---- pieces: sorted by title, filtered by difficulty, category and search
         let gap = 28.0;
         let cw = (w - 48.0).min(280.0);
         let ch = cw + 104.0;
@@ -518,7 +524,7 @@ impl App {
         if ptr.dragging() && ptr.press_pos.y > top {
             self.scroll -= ptr.delta.y;
         }
-        if !bar.contains(ptr.pos) {
+        if ptr.pos.y > top {
             self.scroll -= wheel_notches() * 60.0;
         }
         self.scroll = self.scroll.clamp(0.0, max_scroll);
@@ -568,8 +574,40 @@ impl App {
         }
         draw_rectangle(0.0, 0.0, w, top, BG);
 
-        // ---- category carousel: "All" plus every tag in use; scrolls sideways when too wide
+        // ---- difficulty chips: one per level in use, colored like the level dots;
+        // tapping the selected one again removes the filter.
         let f = &self.fonts;
+        if diff_bar.h > 0.0 {
+            let (chip_h, chip_gap, size, dot) = (36.0, 10.0, 16.0, 6.0);
+            let cy = diff_bar.y + diff_bar.h / 2.0 + 4.0;
+            let mut x = 24.0;
+            let mut picked = None;
+            for &d in &diffs {
+                let label = lib.difficulties[d].title.as_str();
+                let cw = text_width(&f.bold, label, size) + 32.0 + dot * 2.0 + 8.0;
+                let r = Rect::new(x, cy - chip_h / 2.0, cw, chip_h);
+                x += cw + chip_gap;
+                if r.x > w - 24.0 {
+                    break;
+                }
+                let col = difficulty_color(d);
+                let selected = self.difficulty == Some(d);
+                let bg = if selected { col } else if ptr.pressing(r) { PANEL_HI } else { PANEL };
+                rounded_rect(r, chip_h / 2.0, bg);
+                let (fg, dot_col) = if selected { (BG, BG) } else { (TEXT, col) };
+                draw_circle(r.x + 16.0 + dot, cy, dot, dot_col);
+                text_left(&f.bold, label, r.x + 16.0 + dot * 2.0 + 8.0, cy, size, fg);
+                if ptr.tapped(r) {
+                    picked = Some(if selected { None } else { Some(d) });
+                }
+            }
+            if let Some(d) = picked {
+                self.difficulty = d;
+                self.scroll = 0.0;
+            }
+        }
+
+        // ---- category carousel: "All" plus every tag in use; scrolls sideways when too wide
         let mut chips: Vec<(Option<String>, String)> = vec![(None, s.all.to_string())];
         chips.extend(lib.categories().into_iter().map(|id| {
             let t = lib.tag_title(&id);

@@ -79,6 +79,7 @@
 
   <composition id="die-zauberfloete" path="die-zauberfloete">
     <composer>Wolfgang Amadeus Mozart</composer>
+    <thumbnail src="die-zauberfloete/thumbnail.png"/>
     <tags>
       <tag>classical</tag>
     </tags>

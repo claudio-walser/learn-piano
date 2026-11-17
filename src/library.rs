@@ -339,14 +339,23 @@ impl Library {
         out
     }
 
-    /// Indices of the compositions with tag `tag` (all for `None`) matching `query`
+    /// Indices into [`Library::difficulties`] that at least one composition offers, in definition order.
+    pub fn used_difficulties(&self) -> Vec<usize> {
+        (0..self.difficulties.len())
+            .filter(|&d| self.compositions.iter().any(|c| c.levels.iter().any(|l| l.difficulty_index == d)))
+            .collect()
+    }
+
+    /// Indices of the compositions offering difficulty `difficulty` (index into
+    /// [`Library::difficulties`]) with tag `tag` (`None` = no filter) matching `query`
     /// (title in the current language or English, composer or category), sorted by title.
-    pub fn visible(&self, tag: Option<&str>, query: &str) -> Vec<usize> {
+    pub fn visible(&self, difficulty: Option<usize>, tag: Option<&str>, query: &str) -> Vec<usize> {
         let words: Vec<String> = fold(query).split_whitespace().map(str::to_string).collect();
         let mut v: Vec<(String, usize)> = self
             .compositions
             .iter()
             .enumerate()
+            .filter(|(_, c)| difficulty.is_none_or(|d| c.levels.iter().any(|l| l.difficulty_index == d)))
             .filter(|(_, c)| tag.is_none_or(|t| c.tags.iter().any(|x| x == t)))
             .filter(|(_, c)| {
                 let mut hay: Vec<String> = vec![c.title.clone(), c.title_en.clone()];
@@ -442,15 +451,21 @@ mod tests {
         assert_eq!(lib.tag_title("rock-pop"), "Rock pop");
         assert!(lib.categories().contains(&"christmas".to_string()));
         let ids = |v: Vec<usize>| v.into_iter().map(|i| lib.compositions[i].id.as_str()).collect::<Vec<_>>();
-        let all = ids(lib.visible(None, ""));
+        let all = ids(lib.visible(None, None, ""));
         assert_eq!(all[..3], ["all-my-little-ducklings", "die-zauberfloete", "fuer-elise"]);
-        assert_eq!(ids(lib.visible(Some("christmas"), "")), ["oh-christmas-tree", "silent-night"]);
-        assert_eq!(ids(lib.visible(None, "fur")), ["fuer-elise"]);
-        assert_eq!(ids(lib.visible(None, "beethoven ode")), ["ode-to-joy"]);
-        assert_eq!(ids(lib.visible(None, "weihnacht")), ["oh-christmas-tree", "silent-night"]);
+        assert_eq!(ids(lib.visible(None, Some("christmas"), "")), ["oh-christmas-tree", "silent-night"]);
+        assert_eq!(ids(lib.visible(None, None, "fur")), ["fuer-elise"]);
+        assert_eq!(ids(lib.visible(None, None, "beethoven ode")), ["ode-to-joy"]);
+        assert_eq!(ids(lib.visible(None, None, "weihnacht")), ["oh-christmas-tree", "silent-night"]);
         // English titles are found in German too.
-        assert_eq!(ids(lib.visible(None, "silent")), ["silent-night"]);
-        assert!(lib.visible(Some("birthday"), "elise").is_empty());
+        assert_eq!(ids(lib.visible(None, None, "silent")), ["silent-night"]);
+        assert!(lib.visible(None, Some("birthday"), "elise").is_empty());
+        // Difficulty filter: only pieces offering that level.
+        let diff = |id: &str| lib.difficulties.iter().position(|d| d.id == id);
+        assert!(lib.used_difficulties().contains(&diff("prep").unwrap()));
+        assert!(!lib.used_difficulties().contains(&diff("expert").unwrap()));
+        assert_eq!(ids(lib.visible(diff("duet"), None, "")), ["happy-birthday"]);
+        assert_eq!(ids(lib.visible(diff("prep"), Some("christmas"), "")), ["silent-night"]);
 
         let sn = lib.compositions.iter().find(|c| c.id == "silent-night").unwrap();
         let ids: Vec<&str> = sn.levels.iter().map(|l| l.difficulty.as_str()).collect();
