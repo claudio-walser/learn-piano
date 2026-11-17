@@ -69,6 +69,9 @@ pub struct Strings {
     pub all: &'static str,
     pub search: &'static str,
     pub no_matches: &'static str,
+    pub menu_songs: &'static str,
+    pub menu_exercises: &'static str,
+    pub no_exercises: &'static str,
 }
 
 fn leak(s: String) -> &'static str {
@@ -130,6 +133,9 @@ impl Strings {
             all: t!("all"),
             search: t!("search"),
             no_matches: t!("no-matches"),
+            menu_songs: t!("menu-songs"),
+            menu_exercises: t!("menu-exercises"),
+            no_exercises: t!("no-exercises"),
             loader: l,
         }
     }

@@ -55,6 +55,7 @@ compositions/                   die Bibliothek
       01-part-A.musicxml      Lektionen (optional), in Namensreihenfolge
       02-part-B.musicxml
       full.musicxml           ganzes Stück (Pflicht)
+  exercises/<übung>/          Übungen (Tonleitern, Akkorde, …), gleicher Aufbau wie ein Stück
 ```
 
 `path` und `thumbnail src` in `compositions.xml` sind relativ zum Ordner der `compositions.xml`.
@@ -69,6 +70,13 @@ sondern ein Duett. Sie wird in der Auswahl abgesetzt angezeigt. Die MusicXML ent
 
 **Kategorien:** Die Tags der Stücke (`<tag>christmas</tag>`) erscheinen als Kategorien über
 der Liste, in der Reihenfolge des Blocks `<tags>` in `compositions.xml`.
+
+**Übungen:** Das Dashboard hat links ein Menü mit „Songs“ und „Übungen“. Übungen stehen in
+`compositions.xml` im Block `<exercises>` als `<exercise id="…" path="…"/>` und sind genau wie
+Stücke aufgebaut (Schwierigkeits-Ordner, Lektionen, `full.musicxml`). Ihr Titel ist
+`exercise-<id>` in `compositions.ftl`. Sie erscheinen in der Reihenfolge der Datei, nicht in
+Suche und Filtern der Songs. Ohne `thumbnail` zeigt die Karte eine kleine Klaviatur mit den
+Tasten der Übung (rechte Hand blau, linke orange).
 
 ## Übersetzungen
 

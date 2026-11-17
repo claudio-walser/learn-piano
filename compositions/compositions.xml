@@ -5,7 +5,7 @@
   relative to it. The difficulty levels are the subfolders of each composition
   folder (e.g. oh-christmas-tree/beginner).
   Titles are not stored here but in locales/<lang>/compositions.ftl, as
-  difficulty-<id>, tag-<id> and composition-<id>.
+  difficulty-<id>, tag-<id>, composition-<id> and exercise-<id>.
 -->
 <library format-version="1">
 
@@ -86,5 +86,16 @@
   </composition>
 
 </compositions>
+
+<!-- Exercises (scales, chords, …), shown under "Exercises" in the menu. Same structure as a
+     composition (difficulty subfolders with full.musicxml and optional lessons); titles are
+     exercise-<id> in compositions.ftl. -->
+<exercises>
+
+  <exercise id="c-major-scale" path="exercises/c-major-scale"/>
+
+  <exercise id="c-major-chords" path="exercises/c-major-chords"/>
+
+</exercises>
 
 </library>

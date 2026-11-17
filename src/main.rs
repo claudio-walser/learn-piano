@@ -128,6 +128,52 @@ async fn run() {
     }
 }
 
+/// Entries of the dashboard's menu.
+#[derive(Clone, Copy, PartialEq)]
+enum Section {
+    Songs,
+    Exercises,
+}
+
+/// Picture of a card: the thumbnail, or for an exercise without one the keys it uses.
+enum Thumb {
+    None,
+    Image(Texture2D),
+    /// (pitch, staff) of every note of the exercise's first level.
+    Keys(Vec<(u8, u8)>),
+}
+
+/// Keyboard from the lowest to the highest note (white keys at both ends), with the
+/// notes colored by hand.
+fn draw_key_preview(notes: &[(u8, u8)], r: Rect) {
+    let (Some(lo), Some(hi)) = (notes.iter().map(|n| n.0).min(), notes.iter().map(|n| n.0).max()) else { return };
+    let lo = if is_black(lo) { lo - 1 } else { lo };
+    let hi = if is_black(hi) { hi + 1 } else { hi };
+    let whites = (lo..=hi).filter(|&p| !is_black(p)).count() as f32;
+    let kw = r.w * 0.86;
+    let kh = (kw / whites * 4.2).min(r.h * 0.6);
+    let area = Rect::new(r.x + (r.w - kw) / 2.0, r.y + (r.h - kh) / 2.0, kw, kh);
+    let keys = KeyLayout::new(lo, hi, area);
+    let color = |p: u8| {
+        let staffs = || notes.iter().filter(move |n| n.0 == p).map(|n| n.1);
+        if staffs().any(|s| s == 1) {
+            Some(RIGHT_HAND)
+        } else if staffs().next().is_some() {
+            Some(LEFT_HAND)
+        } else {
+            None
+        }
+    };
+    for black in [false, true] {
+        for p in keys.pitches().filter(|&p| is_black(p) == black) {
+            let k = keys.key(p).unwrap();
+            let base = if black { BG_DEEP } else { rgb(0xeceff4) };
+            let k = if black { k } else { Rect::new(k.x + 1.0, k.y, k.w - 2.0, k.h) };
+            draw_rectangle(k.x, k.y, k.w, k.h, color(p).unwrap_or(base));
+        }
+    }
+}
+
 enum Screen {
     Dashboard,
     Difficulty(usize),
@@ -159,7 +205,9 @@ enum Action {
 struct App {
     fonts: Fonts,
     lib: Option<Library>,
-    thumbs: Vec<Option<Texture2D>>,
+    thumbs: Vec<Thumb>,
+    /// Entry of the dashboard's menu.
+    section: Section,
     audio: Audio,
     midi: Midi,
     echo: Arc<AtomicBool>,
@@ -231,7 +279,7 @@ fn load_library(
     root: Result<std::path::PathBuf, Option<std::path::PathBuf>>,
     s: &Strings,
     lang: &LanguageIdentifier,
-) -> (Option<Library>, Vec<Option<Texture2D>>, Screen) {
+) -> (Option<Library>, Vec<Thumb>, Screen) {
     let lib = match root {
         Ok(root) => Library::load(&root).map(|mut l| {
             l.localize(lang);
@@ -246,10 +294,16 @@ fn load_library(
                 .compositions
                 .iter()
                 .map(|c| {
-                    let bytes = std::fs::read(c.thumbnail.as_ref()?).ok()?;
-                    let tex = Texture2D::from_file_with_format(&bytes, None);
-                    tex.set_filter(FilterMode::Linear);
-                    Some(tex)
+                    if let Some(bytes) = c.thumbnail.as_ref().and_then(|p| std::fs::read(p).ok()) {
+                        let tex = Texture2D::from_file_with_format(&bytes, None);
+                        tex.set_filter(FilterMode::Linear);
+                        return Thumb::Image(tex);
+                    }
+                    let full = c.levels.first().and_then(|l| l.lessons.last()).filter(|_| c.exercise);
+                    match full.and_then(|f| score::load(&f.path).ok()) {
+                        Some(s) => Thumb::Keys(s.notes.iter().map(|n| (n.pitch, n.staff)).collect()),
+                        None => Thumb::None,
+                    }
                 })
                 .collect();
             (Some(l), thumbs, Screen::Dashboard)
@@ -260,7 +314,7 @@ fn load_library(
 
 fn lesson_key(lib: &Library, c: usize, l: usize, lesson: &Lesson) -> String {
     let comp = &lib.compositions[c];
-    format!("{}/{}/{}", comp.id, comp.levels[l].difficulty, lesson.stem)
+    format!("{}/{}/{}", comp.key(), comp.levels[l].difficulty, lesson.stem)
 }
 
 fn lesson_label(s: &Strings, lesson: &Lesson) -> String {
@@ -296,6 +350,7 @@ impl App {
             fonts: Fonts::load(),
             lib,
             thumbs,
+            section: Section::Songs,
             audio,
             midi,
             echo,
@@ -423,7 +478,12 @@ impl App {
                 self.show_settings = true;
             }
             300 => shot("6-settings.png"),
-            301 => std::process::exit(0),
+            301 => {
+                self.show_settings = false;
+                self.section = Section::Exercises;
+            }
+            320 => shot("7-exercises.png"),
+            321 => std::process::exit(0),
             _ => {}
         }
     }
@@ -502,50 +562,138 @@ impl App {
     // ------------------------------------------------------------- dashboard
 
     fn dashboard(&mut self, ptr: &Pointer) -> Option<Action> {
-        let s = self.s();
         let (w, h) = (vw(), vh());
         let header = 96.0;
-        let Some(lib) = &self.lib else { return None };
-        // Difficulty row only when there is something to choose from.
-        let diffs = lib.used_difficulties();
-        let diff_bar = Rect::new(0.0, header, w, if diffs.len() > 1 { 56.0 } else { 0.0 });
-        let bar = Rect::new(0.0, diff_bar.y + diff_bar.h, w, 64.0);
-        let top = bar.y + bar.h;
-        let visible = lib.visible(self.difficulty, self.category.as_deref(), &self.search);
+        // Wide windows: icon and label side by side; narrow ones: label under the icon.
+        let side = if w >= 900.0 { 220.0 } else { 92.0 };
+        let area = Rect::new(side, header, w - side, h - header);
+        if self.lib.is_none() {
+            return None;
+        }
+        let action = match self.section {
+            Section::Songs => self.songs(ptr, area),
+            Section::Exercises => self.exercises(ptr, area),
+        };
+        self.sidebar(ptr, Rect::new(0.0, header, side, h - header));
+        self.dashboard_header(ptr, header);
+        action
+    }
 
-        // ---- pieces: sorted by title, filtered by difficulty, category and search
+    /// Left menu: songs and exercises.
+    fn sidebar(&mut self, ptr: &Pointer, r: Rect) {
+        let s = self.s();
+        let f = &self.fonts;
+        draw_rectangle(r.x, 0.0, r.w, vh(), BG);
+        draw_line(r.x + r.w - 1.0, r.y + 8.0, r.x + r.w - 1.0, r.y + r.h - 8.0, 1.0, PANEL);
+        let wide = r.w > 120.0;
+        let items = [(Section::Songs, s.menu_songs), (Section::Exercises, s.menu_exercises)];
+        let mut y = r.y + 8.0;
+        for (section, label) in items {
+            let item = if wide { Rect::new(16.0, y, r.w - 32.0, 52.0) } else { Rect::new(10.0, y, r.w - 20.0, 72.0) };
+            y += item.h + 8.0;
+            let selected = self.section == section;
+            let bg = if selected { PANEL_HI } else if ptr.pressing(item) { PANEL } else { BG };
+            rounded_rect(item, 14.0, bg);
+            let fg = if selected { TEXT } else { MUTED };
+            let (icon_c, icon_s) = if wide {
+                (vec2(item.x + 28.0, item.y + item.h / 2.0), 26.0)
+            } else {
+                (vec2(item.x + item.w / 2.0, item.y + 28.0), 28.0)
+            };
+            match section {
+                Section::Songs => icon_note(icon_c, icon_s, fg),
+                Section::Exercises => icon_steps(icon_c, icon_s, fg),
+            }
+            if wide {
+                let size = fit_size(&f.bold, label, 19.0, item.w - 72.0);
+                text_left(&f.bold, label, item.x + 56.0, item.y + item.h / 2.0, size, fg);
+            } else {
+                let size = fit_size(&f.bold, label, 14.0, item.w - 8.0);
+                text_center(&f.bold, label, item.x + item.w / 2.0, item.y + 56.0, size, fg);
+            }
+            if ptr.tapped(item) && !selected {
+                self.section = section;
+                self.scroll = 0.0;
+                self.search_focus = false;
+            }
+        }
+    }
+
+    /// Title, search field (songs only), MIDI status and settings.
+    fn dashboard_header(&mut self, ptr: &Pointer, header: f32) {
+        let s = self.s();
+        let w = vw();
+        let f = &self.fonts;
+        draw_rectangle(0.0, 0.0, w, header, BG);
+        text_left(&f.bold, s.app_title, 32.0, header / 2.0, 38.0, TEXT);
+        let gear = Rect::new(w - 76.0, header / 2.0 - 26.0, 52.0, 52.0);
+        if icon_button(ptr, gear, PANEL, |c| icon_gear(c, 40.0, TEXT, PANEL)) {
+            self.show_settings = true;
+        }
+        let pill_x = self.midi_pill(gear.x - 14.0, header / 2.0);
+        if self.section != Section::Songs {
+            while get_char_pressed().is_some() {}
+            return;
+        }
+        let field_left = 32.0 + text_width(&f.bold, s.app_title, 38.0) + 32.0;
+        let field_right = pill_x - 16.0;
+        let field_h = 48.0;
+        let changed = if field_right - field_left >= 200.0 {
+            let fw = (field_right - field_left).min(420.0);
+            let r = Rect::new(field_left, header / 2.0 - field_h / 2.0, fw, field_h);
+            text_field(f, ptr, r, &mut self.search, &mut self.search_focus, s.search)
+        } else if self.search_focus || !self.search.is_empty() {
+            // Narrow window: the field covers the title while it is in use.
+            let r = Rect::new(24.0, header / 2.0 - field_h / 2.0, field_right - 24.0, field_h);
+            draw_rectangle(0.0, 0.0, field_right, header, BG);
+            text_field(f, ptr, r, &mut self.search, &mut self.search_focus, s.search)
+        } else {
+            while get_char_pressed().is_some() {}
+            let r = Rect::new(field_right - field_h, header / 2.0 - field_h / 2.0, field_h, field_h);
+            if icon_button(ptr, r, PANEL, |c| icon_search(c, 26.0, TEXT)) {
+                self.search_focus = true;
+            }
+            false
+        };
+        if changed {
+            self.scroll = 0.0;
+        }
+    }
+
+    /// Scrollable grid of cards for the compositions `items` in `area`. Cards that scroll
+    /// above the area are covered, so whatever is drawn above it afterwards stays clean.
+    fn card_grid(&mut self, ptr: &Pointer, items: &[usize], area: Rect) -> Option<Action> {
+        let lib = self.lib.as_ref()?;
+        let top = area.y;
         let gap = 28.0;
-        let cw = (w - 48.0).min(280.0);
+        let cw = (area.w - 48.0).min(280.0);
         let ch = cw + 104.0;
-        let cols = ((w - 48.0 + gap) / (cw + gap)).floor().max(1.0) as usize;
-        let rows = visible.len().div_ceil(cols);
+        let cols = ((area.w - 48.0 + gap) / (cw + gap)).floor().max(1.0) as usize;
+        let rows = items.len().div_ceil(cols);
         let content_h = rows as f32 * (ch + gap) + 24.0;
-        let max_scroll = (content_h - (h - top)).max(0.0);
-        if ptr.dragging() && ptr.press_pos.y > top {
+        let max_scroll = (content_h - area.h).max(0.0);
+        if ptr.dragging() && area.contains(ptr.press_pos) {
             self.scroll -= ptr.delta.y;
         }
-        if ptr.pos.y > top {
+        if area.contains(ptr.pos) {
             self.scroll -= wheel_notches() * 60.0;
         }
         self.scroll = self.scroll.clamp(0.0, max_scroll);
 
         let grid_w = cols as f32 * cw + (cols - 1) as f32 * gap;
-        let x0 = (w - grid_w) / 2.0;
+        let x0 = area.x + (area.w - grid_w) / 2.0;
         let y0 = top + 8.0 - self.scroll;
         let mut action = None;
-        for (k, &i) in visible.iter().enumerate() {
+        for (k, &i) in items.iter().enumerate() {
             let comp = &lib.compositions[i];
             let (col, row) = (k % cols, k / cols);
             let card = Rect::new(x0 + col as f32 * (cw + gap), y0 + row as f32 * (ch + gap), cw, ch);
-            if card.y > h || card.y + card.h < top {
+            if card.y > area.y + area.h || card.y + card.h < top {
                 continue;
             }
             rounded_rect(card, 18.0, if ptr.pressing(card) { PANEL_HI } else { PANEL });
             let img = Rect::new(card.x + 12.0, card.y + 12.0, cw - 24.0, cw - 24.0);
-            match self.thumbs.get(i).and_then(|t| t.as_ref()) {
-                Some(t) => draw_cover(t, img),
-                None => rounded_rect(img, 12.0, PANEL_HI),
-            }
+            self.draw_thumb(i, img);
             let title = comp.title.as_str();
             let ts = fit_size(&self.fonts.bold, title, 23.0, cw - 32.0);
             text_left(&self.fonts.bold, title, card.x + 16.0, img.y + img.h + 26.0, ts, TEXT);
@@ -564,15 +712,57 @@ impl App {
                     draw_circle_lines(cx, cy, 8.0, 2.0, col);
                 }
             }
-            if ptr.tapped(card) && ptr.pos.y > top {
+            if ptr.tapped(card) && area.contains(ptr.pos) {
                 action = Some(Action::OpenComposition(i));
             }
         }
-        if visible.is_empty() {
-            let msg = if lib.compositions.is_empty() { s.no_compositions } else { s.no_matches };
-            text_center(&self.fonts.regular, msg, w / 2.0, (top + h) / 2.0, 24.0, MUTED);
+        draw_rectangle(area.x, 0.0, area.w, top, BG);
+        action
+    }
+
+    /// Thumbnail of a composition; exercises without an image show their keys.
+    fn draw_thumb(&self, i: usize, r: Rect) {
+        match self.thumbs.get(i) {
+            Some(Thumb::Image(t)) => draw_cover(t, r),
+            Some(Thumb::Keys(notes)) => {
+                gradient_rect(r, PANEL_HI, mix(PANEL_HI, BG, 0.5));
+                draw_key_preview(notes, r);
+            }
+            _ => rounded_rect(r, 12.0, PANEL_HI),
         }
-        draw_rectangle(0.0, 0.0, w, top, BG);
+    }
+
+    fn exercises(&mut self, ptr: &Pointer, area: Rect) -> Option<Action> {
+        let items = self.lib.as_ref()?.exercises();
+        let action = self.card_grid(ptr, &items, area);
+        if items.is_empty() {
+            let c = vec2(area.x + area.w / 2.0, area.y + area.h / 2.0);
+            text_center(&self.fonts.regular, self.s().no_exercises, c.x, c.y, 24.0, MUTED);
+        }
+        action
+    }
+
+    fn songs(&mut self, ptr: &Pointer, area: Rect) -> Option<Action> {
+        let s = self.s();
+        let w = vw();
+        let (left, right) = (area.x, area.x + area.w);
+        let lib = self.lib.as_ref()?;
+        // Difficulty row only when there is something to choose from.
+        let diffs = lib.used_difficulties();
+        let diff_bar = Rect::new(left, area.y, area.w, if diffs.len() > 1 { 56.0 } else { 0.0 });
+        let bar = Rect::new(left, diff_bar.y + diff_bar.h, area.w, 64.0);
+        let top = bar.y + bar.h;
+        let visible = lib.visible(self.difficulty, self.category.as_deref(), &self.search);
+        let no_songs = !lib.compositions.iter().any(|c| !c.exercise);
+
+        // ---- pieces: sorted by title, filtered by difficulty, category and search
+        let grid = Rect::new(left, top, area.w, area.y + area.h - top);
+        let action = self.card_grid(ptr, &visible, grid);
+        if visible.is_empty() {
+            let msg = if no_songs { s.no_compositions } else { s.no_matches };
+            text_center(&self.fonts.regular, msg, grid.x + grid.w / 2.0, grid.y + grid.h / 2.0, 24.0, MUTED);
+        }
+        let lib = self.lib.as_ref()?;
 
         // ---- difficulty chips: one per level in use, colored like the level dots;
         // tapping the selected one again removes the filter.
@@ -580,14 +770,14 @@ impl App {
         if diff_bar.h > 0.0 {
             let (chip_h, chip_gap, size, dot) = (36.0, 10.0, 16.0, 6.0);
             let cy = diff_bar.y + diff_bar.h / 2.0 + 4.0;
-            let mut x = 24.0;
+            let mut x = left + 24.0;
             let mut picked = None;
             for &d in &diffs {
                 let label = lib.difficulties[d].title.as_str();
                 let cw = text_width(&f.bold, label, size) + 32.0 + dot * 2.0 + 8.0;
                 let r = Rect::new(x, cy - chip_h / 2.0, cw, chip_h);
                 x += cw + chip_gap;
-                if r.x > w - 24.0 {
+                if r.x > right - 24.0 {
                     break;
                 }
                 let col = difficulty_color(d);
@@ -617,7 +807,7 @@ impl App {
         let icon = 22.0;
         let widths: Vec<f32> = chips.iter().map(|(_, l)| text_width(&f.bold, l, size) + 40.0 + icon + 8.0).collect();
         let total = widths.iter().sum::<f32>() + chip_gap * (chips.len() - 1) as f32;
-        let (left, view_w) = (24.0, w - 48.0);
+        let (pad, view_w) = (24.0, area.w - 48.0);
         let max_cat = (total - view_w).max(0.0);
         if ptr.dragging() && bar.contains(ptr.press_pos) {
             self.category_scroll -= ptr.delta.x;
@@ -630,12 +820,12 @@ impl App {
         self.category_scroll = self.category_scroll.clamp(0.0, max_cat);
         let arrows = (self.category_scroll > 0.5, self.category_scroll < max_cat - 0.5);
         let cy = bar.y + bar.h / 2.0 - 4.0;
-        let mut x = left - self.category_scroll;
+        let mut x = left + pad - self.category_scroll;
         let mut picked = None;
         for ((id, label), cw) in chips.iter().zip(&widths) {
             let r = Rect::new(x, cy - chip_h / 2.0, *cw, chip_h);
             x += cw + chip_gap;
-            if r.x + r.w < 0.0 || r.x > w {
+            if r.x + r.w < left || r.x > w {
                 continue;
             }
             let selected = *id == self.category;
@@ -644,20 +834,19 @@ impl App {
             let fg = if selected { BG } else { TEXT };
             icon_category(id.as_deref(), vec2(r.x + 20.0 + icon / 2.0, cy), icon, fg, bg);
             text_left(&f.bold, label, r.x + 20.0 + icon + 8.0, cy, size, fg);
-            let hidden = (arrows.0 && ptr.pos.x < 64.0) || (arrows.1 && ptr.pos.x > w - 64.0);
-            if ptr.tapped(r) && !hidden {
+            let hidden = (arrows.0 && ptr.pos.x < left + 64.0) || (arrows.1 && ptr.pos.x > right - 64.0);
+            if ptr.tapped(r) && !hidden && bar.contains(ptr.pos) {
                 // Tapping the selected category again shows all pieces.
                 picked = Some(if selected { None } else { id.clone() });
             }
         }
         // Cover the chips outside the visible strip; arrows where more chips are hidden.
-        draw_rectangle(0.0, bar.y, left, bar.h, BG);
-        draw_rectangle(w - left, bar.y, left, bar.h, BG);
+        draw_rectangle(right - pad, bar.y, pad, bar.h, BG);
         for (show, dir) in [(arrows.0, -1.0f32), (arrows.1, 1.0)] {
             if !show {
                 continue;
             }
-            let bx = if dir < 0.0 { 0.0 } else { w - 64.0 };
+            let bx = if dir < 0.0 { left } else { right - 64.0 };
             draw_rectangle(bx, bar.y, 64.0, bar.h, BG);
             let r = Rect::new(bx + 10.0, cy - chip_h / 2.0, chip_h, chip_h);
             if icon_button(ptr, r, PANEL_HI, |c| icon_chevron(c, 20.0, dir, TEXT)) {
@@ -666,37 +855,6 @@ impl App {
         }
         if let Some(c) = picked {
             self.category = c;
-            self.scroll = 0.0;
-        }
-
-        // ---- header: title, search field, MIDI status, settings
-        text_left(&f.bold, s.app_title, 32.0, header / 2.0, 38.0, TEXT);
-        let gear = Rect::new(w - 76.0, header / 2.0 - 26.0, 52.0, 52.0);
-        if icon_button(ptr, gear, PANEL, |c| icon_gear(c, 40.0, TEXT, PANEL)) {
-            self.show_settings = true;
-        }
-        let pill_x = self.midi_pill(gear.x - 14.0, header / 2.0);
-        let field_left = 32.0 + text_width(&f.bold, s.app_title, 38.0) + 32.0;
-        let field_right = pill_x - 16.0;
-        let field_h = 48.0;
-        let changed = if field_right - field_left >= 200.0 {
-            let fw = (field_right - field_left).min(420.0);
-            let r = Rect::new(field_left, header / 2.0 - field_h / 2.0, fw, field_h);
-            text_field(f, ptr, r, &mut self.search, &mut self.search_focus, s.search)
-        } else if self.search_focus || !self.search.is_empty() {
-            // Narrow window: the field covers the title while it is in use.
-            let r = Rect::new(24.0, header / 2.0 - field_h / 2.0, field_right - 24.0, field_h);
-            draw_rectangle(0.0, 0.0, field_right, header, BG);
-            text_field(f, ptr, r, &mut self.search, &mut self.search_focus, s.search)
-        } else {
-            while get_char_pressed().is_some() {}
-            let r = Rect::new(field_right - field_h, header / 2.0 - field_h / 2.0, field_h, field_h);
-            if icon_button(ptr, r, PANEL, |c| icon_search(c, 26.0, TEXT)) {
-                self.search_focus = true;
-            }
-            false
-        };
-        if changed {
             self.scroll = 0.0;
         }
         action
@@ -716,10 +874,7 @@ impl App {
         gradient_rect(Rect::new(0.0, 0.0, w, hero_h), rgb(0x3d322b), rgb(0x27221f));
         let side = hero_h * 0.82;
         let img = Rect::new((w - side) / 2.0, (hero_h - side) / 2.0, side, side);
-        match self.thumbs.get(c).and_then(|t| t.as_ref()) {
-            Some(t) => draw_cover(t, img),
-            None => rounded_rect(img, 16.0, PANEL),
-        }
+        self.draw_thumb(c, img);
         let mut action = None;
         let back = Rect::new(20.0, 20.0, 56.0, 56.0);
         if icon_button(ptr, back, alpha(BLACK, 0.35), |p| icon_back(p, 28.0, TEXT)) {

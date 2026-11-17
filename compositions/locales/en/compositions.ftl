@@ -1,5 +1,5 @@
 # Texts of the bundled library (source language). Message ids: difficulty-<id>, tag-<id>,
-# composition-<id> with the ids from compositions.xml. To add a language, copy this folder to
+# composition-<id>, exercise-<id> with the ids from compositions.xml. To add a language, copy this folder to
 # locales/<language code>/ and translate the values.
 
 ## Difficulty levels
@@ -23,3 +23,7 @@ composition-fuer-elise = Für Elise
 composition-ode-to-joy = Ode to Joy
 composition-all-my-little-ducklings = All My Little Ducklings
 composition-die-zauberfloete = The Magic Flute: Das klinget so herrlich
+
+## Exercises
+exercise-c-major-scale = C Major Scale
+exercise-c-major-chords = C Major Chords: C, F, G

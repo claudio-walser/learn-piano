@@ -8,6 +8,9 @@ search = Suchen …
 all = Alle
 no-compositions = Keine Stücke gefunden
 no-matches = Keine passenden Stücke
+menu-songs = Songs
+menu-exercises = Übungen
+no-exercises = Keine Übungen gefunden
 
 ## Difficulty
 choose-difficulty = Schwierigkeitsstufe wählen

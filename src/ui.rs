@@ -602,11 +602,27 @@ pub fn icon_category(tag: Option<&str>, c: Vec2, size: f32, color: Color, bg: Co
             draw_triangle(vec2(x + s * 0.7, y - s * 0.45), vec2(x + s * 0.7, y - s * 0.2), vec2(x + s * 1.0, y - s * 0.32), color);
             draw_circle(x + s * 0.48, y - s * 0.45, s * 0.08, bg);
         }
-        // Eighth note.
-        Some(_) => {
-            draw_ellipse(x - s * 0.25, y + s * 0.55, s * 0.32, s * 0.24, -20.0, color);
-            draw_line(x + s * 0.05, y + s * 0.5, x + s * 0.05, y - s * 0.85, s * 0.13, color);
-            draw_triangle(vec2(x + s * 0.05, y - s * 0.85), vec2(x + s * 0.05, y - s * 0.4), vec2(x + s * 0.55, y - s * 0.2), color);
-        }
+        Some(_) => icon_note(c, size, color),
+    }
+}
+
+/// Eighth note (songs, unknown categories).
+pub fn icon_note(c: Vec2, size: f32, color: Color) {
+    let s = size / 2.0;
+    let (x, y) = (c.x, c.y);
+    draw_ellipse(x - s * 0.25, y + s * 0.55, s * 0.32, s * 0.24, -20.0, color);
+    draw_line(x + s * 0.05, y + s * 0.5, x + s * 0.05, y - s * 0.85, s * 0.13, color);
+    draw_triangle(vec2(x + s * 0.05, y - s * 0.85), vec2(x + s * 0.05, y - s * 0.4), vec2(x + s * 0.55, y - s * 0.2), color);
+}
+
+/// Rising steps, like a scale (exercises).
+pub fn icon_steps(c: Vec2, size: f32, color: Color) {
+    let s = size / 2.0;
+    let (bw, gap) = (s * 0.38, s * 0.13);
+    let x0 = c.x - (4.0 * bw + 3.0 * gap) / 2.0;
+    for i in 0..4 {
+        let h = s * (0.55 + 0.45 * i as f32);
+        let r = Rect::new(x0 + i as f32 * (bw + gap), c.y + s * 0.85 - h, bw, h);
+        rounded_rect(r, bw * 0.25, color);
     }
 }

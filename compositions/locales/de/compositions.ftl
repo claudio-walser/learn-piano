@@ -21,3 +21,7 @@ composition-fuer-elise = Für Elise
 composition-ode-to-joy = Ode an die Freude
 composition-all-my-little-ducklings = Alle meine Entchen
 composition-die-zauberfloete = Die Zauberflöte: Das klinget so herrlich
+
+## Übungen
+exercise-c-major-scale = C-Dur-Tonleiter
+exercise-c-major-chords = C-Dur-Akkorde: C, F, G

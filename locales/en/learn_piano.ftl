@@ -10,6 +10,9 @@ search = Search …
 all = All
 no-compositions = No pieces found
 no-matches = No matching pieces
+menu-songs = Songs
+menu-exercises = Exercises
+no-exercises = No exercises found
 
 ## Difficulty
 choose-difficulty = Choose difficulty

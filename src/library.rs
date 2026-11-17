@@ -1,8 +1,8 @@
 //! Reads `compositions.xml` and discovers difficulty levels and lessons on disk.
 //!
 //! The library's texts (titles of pieces, difficulty levels and categories) live in
-//! `<library>/locales/<lang>/compositions.ftl` as `composition-<id>`, `difficulty-<id>` and
-//! `tag-<id>`. They are read at runtime, so a library can bring its own translations.
+//! `<library>/locales/<lang>/compositions.ftl` as `composition-<id>`, `exercise-<id>`,
+//! `difficulty-<id>` and `tag-<id>`. They are read at runtime, so a library can bring its own translations.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -78,6 +78,20 @@ pub struct Composition {
     pub thumbnail: Option<PathBuf>,
     pub tags: Vec<String>,
     pub levels: Vec<Level>,
+    /// An `<exercise>` (scale, chords, …) instead of a song.
+    pub exercise: bool,
+}
+
+impl Composition {
+    /// Prefix of its message id in compositions.ftl.
+    fn text_prefix(&self) -> &'static str {
+        if self.exercise { "exercise" } else { "composition" }
+    }
+
+    /// Unique key for the progress: exercises may reuse a song's id.
+    pub fn key(&self) -> String {
+        if self.exercise { format!("exercise:{}", self.id) } else { self.id.clone() }
+    }
 }
 
 pub struct Library {
@@ -219,7 +233,7 @@ impl Library {
         // Paths are relative to the folder of compositions.xml.
         let base = root;
         let mut compositions = Vec::new();
-        for n in top.descendants().filter(|n| n.has_tag_name("composition")) {
+        for n in top.descendants().filter(|n| n.has_tag_name("composition") || n.has_tag_name("exercise")) {
             let Some(id) = n.attribute("id") else { continue };
             let dir = base.join(n.attribute("path").unwrap_or(id));
             let thumbnail = n
@@ -251,6 +265,7 @@ impl Library {
                 thumbnail,
                 tags,
                 levels,
+                exercise: n.has_tag_name("exercise"),
             });
         }
 
@@ -279,17 +294,17 @@ impl Library {
             t.title = get(&cur, "tag", &t.id);
         }
         for c in &mut self.compositions {
-            c.title = get(&cur, "composition", &c.id);
-            c.title_en = get(&eng, "composition", &c.id);
+            c.title = get(&cur, c.text_prefix(), &c.id);
+            c.title_en = get(&eng, c.text_prefix(), &c.id);
         }
     }
 
-    /// Message ids every language should have: one per composition, difficulty and
+    /// Message ids every language should have: one per composition, exercise, difficulty and
     /// category (also categories only used by compositions).
     fn expected_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.difficulties.iter().map(|d| format!("difficulty-{}", d.id)).collect();
         ids.extend(self.categories().iter().chain(self.tags.iter().map(|t| &t.id)).map(|t| format!("tag-{t}")));
-        ids.extend(self.compositions.iter().map(|c| format!("composition-{}", c.id)));
+        ids.extend(self.compositions.iter().map(|c| format!("{}-{}", c.text_prefix(), c.id)));
         ids.sort();
         ids.dedup();
         ids
@@ -323,13 +338,22 @@ impl Library {
         }
     }
 
-    /// Tags used by at least one composition: defined ones in definition order, then the rest by name.
+    /// The songs (compositions that are not exercises).
+    fn songs(&self) -> impl Iterator<Item = &Composition> {
+        self.compositions.iter().filter(|c| !c.exercise)
+    }
+
+    /// Indices of the exercises in the order of compositions.xml.
+    pub fn exercises(&self) -> Vec<usize> {
+        (0..self.compositions.len()).filter(|&i| self.compositions[i].exercise).collect()
+    }
+
+    /// Tags used by at least one song: defined ones in definition order, then the rest by name.
     pub fn categories(&self) -> Vec<String> {
-        let used = |id: &str| self.compositions.iter().any(|c| c.tags.iter().any(|t| t == id));
+        let used = |id: &str| self.songs().any(|c| c.tags.iter().any(|t| t == id));
         let mut out: Vec<String> = self.tags.iter().map(|t| t.id.clone()).filter(|id| used(id)).collect();
         let mut rest: Vec<String> = self
-            .compositions
-            .iter()
+            .songs()
             .flat_map(|c| c.tags.iter().cloned())
             .filter(|t| !self.tags.iter().any(|d| &d.id == t))
             .collect();
@@ -339,14 +363,14 @@ impl Library {
         out
     }
 
-    /// Indices into [`Library::difficulties`] that at least one composition offers, in definition order.
+    /// Indices into [`Library::difficulties`] that at least one song offers, in definition order.
     pub fn used_difficulties(&self) -> Vec<usize> {
         (0..self.difficulties.len())
-            .filter(|&d| self.compositions.iter().any(|c| c.levels.iter().any(|l| l.difficulty_index == d)))
+            .filter(|&d| self.songs().any(|c| c.levels.iter().any(|l| l.difficulty_index == d)))
             .collect()
     }
 
-    /// Indices of the compositions offering difficulty `difficulty` (index into
+    /// Indices of the songs offering difficulty `difficulty` (index into
     /// [`Library::difficulties`]) with tag `tag` (`None` = no filter) matching `query`
     /// (title in the current language or English, composer or category), sorted by title.
     pub fn visible(&self, difficulty: Option<usize>, tag: Option<&str>, query: &str) -> Vec<usize> {
@@ -355,6 +379,7 @@ impl Library {
             .compositions
             .iter()
             .enumerate()
+            .filter(|(_, c)| !c.exercise)
             .filter(|(_, c)| difficulty.is_none_or(|d| c.levels.iter().any(|l| l.difficulty_index == d)))
             .filter(|(_, c)| tag.is_none_or(|t| c.tags.iter().any(|x| x == t)))
             .filter(|(_, c)| {
@@ -471,5 +496,15 @@ mod tests {
         let ids: Vec<&str> = sn.levels.iter().map(|l| l.difficulty.as_str()).collect();
         assert_eq!(ids, ["prep", "beginner", "intermediate"]);
         assert!(sn.levels.iter().all(|l| l.lessons.len() == 4));
+
+        // Exercises: in file order, not among the songs.
+        let ex: Vec<&str> = lib.exercises().into_iter().map(|i| lib.compositions[i].id.as_str()).collect();
+        assert_eq!(ex, ["c-major-scale", "c-major-chords"]);
+        let scale = &lib.compositions[lib.exercises()[0]];
+        assert_eq!(scale.title, "C-Dur-Tonleiter");
+        assert_eq!(scale.key(), "exercise:c-major-scale");
+        assert_eq!(scale.levels.len(), 1);
+        assert!(lib.visible(None, None, "").iter().all(|&i| !lib.compositions[i].exercise));
+        assert!(lib.visible(None, None, "tonleiter").is_empty());
     }
 }
