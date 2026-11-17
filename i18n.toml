@@ -1,4 +1,4 @@
-# Configuration for i18n-embed / the fl!() macro: app texts live in locales/<lang>/learn_piano.ftl,
+# Configuration for i18n-embed / the fl!() macro: app texts live in locales/<lang>/openetude.ftl,
 # English is the source language and the fallback for missing messages.
 fallback_language = "en"
 

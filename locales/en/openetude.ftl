@@ -1,11 +1,11 @@
-# Learn Piano – app texts (source language).
+# OpenEtude – app texts (source language).
 # To add a language, copy this folder to locales/<language code>/ and translate the values.
 
 # Shown in the language selection, in the language itself.
 language-name = English
 
 ## Dashboard
-app-title = Learn Piano
+app-title = OpenEtude
 search = Search …
 all = All
 no-compositions = No pieces found

@@ -1,9 +1,9 @@
-# Learn Piano – deutsche Texte.
+# OpenEtude – deutsche Texte.
 
 language-name = Deutsch
 
 ## Dashboard
-app-title = Klavier lernen
+app-title = OpenEtude
 search = Suchen …
 all = Alle
 no-compositions = Keine Stücke gefunden

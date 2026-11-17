@@ -743,25 +743,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "learn-piano"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "dirs",
- "i18n-embed",
- "i18n-embed-fl",
- "macroquad",
- "midir",
- "roxmltree",
- "rust-embed",
- "rustysynth",
- "serde",
- "serde_json",
- "sys-locale",
- "unic-langid",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1091,6 +1072,25 @@ dependencies = [
  "libc",
  "objc2",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "openetude"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "dirs",
+ "i18n-embed",
+ "i18n-embed-fl",
+ "macroquad",
+ "midir",
+ "roxmltree",
+ "rust-embed",
+ "rustysynth",
+ "serde",
+ "serde_json",
+ "sys-locale",
+ "unic-langid",
 ]
 
 [[package]]

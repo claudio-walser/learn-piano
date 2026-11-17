@@ -60,8 +60,23 @@ pub struct Progress {
     pub results: BTreeMap<String, LessonResult>,
 }
 
+/// `~/.local/share/openetude` (or the platform's equivalent). The folder of the app's former
+/// name `learn-piano` is moved there once, so progress and settings are kept.
+pub fn data_dir() -> Option<PathBuf> {
+    let base = dirs::data_dir()?;
+    let dir = base.join("openetude");
+    let old = base.join("learn-piano");
+    if !dir.exists() && old.is_dir() {
+        if let Err(e) = std::fs::rename(&old, &dir) {
+            eprintln!("{} -> {}: {e}", old.display(), dir.display());
+            return Some(old);
+        }
+    }
+    Some(dir)
+}
+
 fn path() -> Option<PathBuf> {
-    Some(dirs::data_dir()?.join("learn-piano").join("progress.json"))
+    Some(data_dir()?.join("progress.json"))
 }
 
 impl Progress {

@@ -137,7 +137,7 @@ pub fn resolve(dir: &Path) -> Option<PathBuf> {
         .find(|d| d.join("compositions.xml").is_file())
 }
 
-/// Finds the library folder: `--library <dir>`, `$LEARN_PIANO_LIBRARY`, the folder chosen
+/// Finds the library folder: `--library <dir>`, `$OPENETUDE_LIBRARY`, the folder chosen
 /// in the settings, then the working directory and the executable's folder and its parents.
 /// Returns the path that was tried when an explicit choice does not contain a library.
 pub fn find_root(chosen: Option<&Path>) -> Result<PathBuf, Option<PathBuf>> {
@@ -147,7 +147,7 @@ pub fn find_root(chosen: Option<&Path>) -> Result<PathBuf, Option<PathBuf>> {
         .position(|a| a == "--library")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("LEARN_PIANO_LIBRARY").map(PathBuf::from))
+        .or_else(|| std::env::var_os("OPENETUDE_LIBRARY").map(PathBuf::from))
         .or_else(|| chosen.map(Path::to_path_buf));
     if let Some(dir) = explicit {
         return resolve(&dir).ok_or(Some(dir));

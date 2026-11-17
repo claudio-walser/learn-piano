@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=OpenEtude
+GenericName=Piano Trainer
+GenericName[de]=Klavier lernen
+Comment=Learn to play the piano with a MIDI keyboard
+Comment[de]=Klavier lernen mit MIDI-Keyboard
+Exec=openetude
+Icon=org.openetude.OpenEtude
+Terminal=false
+Categories=Education;Music;
+Keywords=piano;midi;music;learn;keyboard;
+Keywords[de]=Klavier;MIDI;Musik;lernen;Keyboard;
+StartupWMClass=org.openetude.OpenEtude

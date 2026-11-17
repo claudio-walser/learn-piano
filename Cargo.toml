@@ -1,8 +1,9 @@
 [package]
-name = "learn-piano"
+name = "openetude"
 version = "0.1.0"
 edition = "2021"
 description = "Learn to play the piano with a MIDI keyboard, MusicXML lessons and a falling-notes view"
+homepage = "https://openetude.org"
 
 [dependencies]
 # GL 2.1 / GLES 2.0 renderer: runs on very old GPUs and on ARM boards

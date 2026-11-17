@@ -44,7 +44,7 @@ impl Midi {
     }
 
     fn scan(&mut self) {
-        let Ok(mut probe) = MidiInput::new("learn-piano") else { return };
+        let Ok(mut probe) = MidiInput::new("openetude") else { return };
         probe.ignore(Ignore::All);
         let ports = probe.ports();
         let named: Vec<_> = ports
@@ -63,7 +63,7 @@ impl Midi {
 
         let Some((port, name)) = named.into_iter().find(|(_, n)| {
             let l = n.to_lowercase();
-            !l.contains("through") && !l.contains("learn-piano")
+            !l.contains("through") && !l.contains("openetude")
         }) else {
             return;
         };
@@ -71,7 +71,7 @@ impl Midi {
         let (tx, audio, echo) = (self.tx.clone(), self.audio.clone(), self.echo.clone());
         let conn = probe.connect(
             &port,
-            "learn-piano-in",
+            "openetude-in",
             move |_stamp, msg, _| {
                 if msg.len() < 3 {
                     return;

@@ -30,9 +30,26 @@ use ui::*;
 const LOOKAHEAD: f64 = 3.0;
 const TEMPOS: [f64; 3] = [0.5, 0.75, 1.0];
 
+/// Window id on Linux (Wayland app id / X11 WM_CLASS). Desktops show the icon of the
+/// `.desktop` file with this name (see `assets/linux`).
+const APP_ID: &str = "org.openetude.OpenEtude";
+
+/// The logo as window icon. Used by Windows and macOS; Linux takes it from the `.desktop` file.
+fn window_icon() -> Option<miniquad::conf::Icon> {
+    fn rgba<const N: usize>(png: &[u8]) -> Option<[u8; N]> {
+        Image::from_file_with_format(png, Some(ImageFormat::Png)).ok()?.bytes.try_into().ok()
+    }
+    Some(miniquad::conf::Icon {
+        small: rgba(include_bytes!("../assets/icons/openetude-16.png"))?,
+        medium: rgba(include_bytes!("../assets/icons/openetude-32.png"))?,
+        big: rgba(include_bytes!("../assets/icons/openetude-64.png"))?,
+    })
+}
+
 fn window_conf() -> Conf {
     Conf {
-        window_title: "Learn Piano".to_owned(),
+        window_title: "OpenEtude".to_owned(),
+        icon: window_icon(),
         window_width: 1280,
         window_height: 800,
         high_dpi: true,
@@ -49,6 +66,7 @@ fn window_conf() -> Conf {
             } else {
                 miniquad::conf::LinuxBackend::X11Only
             },
+            linux_wm_class: APP_ID,
             ..Default::default()
         },
         ..Default::default()
@@ -58,10 +76,10 @@ fn window_conf() -> Conf {
 /// Native Wayland in a Wayland session, X11 otherwise.
 ///
 /// Under XWayland, touches never send a button release, so taps don't work.
-/// `--x11` / `--wayland` (or `LEARN_PIANO_BACKEND=x11|wayland`) override the choice.
+/// `--x11` / `--wayland` (or `OPENETUDE_BACKEND=x11|wayland`) override the choice.
 fn use_wayland() -> bool {
     let arg = |a: &str| std::env::args().any(|x| x == a);
-    let env = std::env::var("LEARN_PIANO_BACKEND").unwrap_or_default();
+    let env = std::env::var("OPENETUDE_BACKEND").unwrap_or_default();
     if arg("--x11") || env == "x11" {
         return false;
     }
@@ -69,7 +87,7 @@ fn use_wayland() -> bool {
         return true;
     }
     // The screenshot tour reads the framebuffer back, which only works on X11.
-    if std::env::var_os("LEARN_PIANO_SHOTS").is_some() {
+    if std::env::var_os("OPENETUDE_SHOTS").is_some() {
         return false;
     }
     std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
@@ -255,7 +273,7 @@ struct App {
     lang_scroll: f32,
     screen: Screen,
     pointer: Pointer,
-    /// Dev aid: `LEARN_PIANO_SHOTS=<dir>` walks through all screens, saves PNGs and quits.
+    /// Dev aid: `OPENETUDE_SHOTS=<dir>` walks through all screens, saves PNGs and quits.
     shots: Option<(std::path::PathBuf, u32)>,
     scroll: f32,
     /// Dashboard filter: search text, selected difficulty (index into the library's
@@ -406,7 +424,7 @@ impl App {
             category_scroll: 0.0,
             show_settings: false,
             browser: None,
-            shots: std::env::var_os("LEARN_PIANO_SHOTS").map(|d| (d.into(), 0)),
+            shots: std::env::var_os("OPENETUDE_SHOTS").map(|d| (d.into(), 0)),
             debug: debug::Debug::from_env(),
         }
     }
@@ -1882,5 +1900,15 @@ impl App {
         if let Some(dir) = choose {
             self.set_library(dir);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn window_icon_decodes() {
+        let icon = super::window_icon().expect("icon PNGs must be 16, 32 and 64 px RGBA");
+        // Opaque in the middle (the logo), not an empty image.
+        assert_eq!(icon.big[(32 * 64 + 32) * 4 + 3], 255);
     }
 }

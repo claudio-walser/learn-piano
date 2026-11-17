@@ -1,8 +1,8 @@
 //! Diagnostics for troubleshooting on the target device.
 //!
-//! Enabled with `--debug` or `LEARN_PIANO_DEBUG=1`. Shows FPS, frame times and the
+//! Enabled with `--debug` or `OPENETUDE_DEBUG=1`. Shows FPS, frame times and the
 //! raw mouse/touch input in a corner, and writes the same to
-//! `~/.local/share/learn-piano/debug.log` (and stderr).
+//! `~/.local/share/openetude/debug.log` (and stderr).
 
 use std::collections::VecDeque;
 use std::fs::File;
@@ -24,12 +24,11 @@ pub struct Debug {
 impl Debug {
     pub fn from_env() -> Option<Debug> {
         let on = std::env::args().any(|a| a == "--debug")
-            || std::env::var("LEARN_PIANO_DEBUG").is_ok_and(|v| v != "0" && !v.is_empty());
+            || std::env::var("OPENETUDE_DEBUG").is_ok_and(|v| v != "0" && !v.is_empty());
         if !on {
             return None;
         }
-        let log = dirs::data_dir().and_then(|d| {
-            let dir = d.join("learn-piano");
+        let log = crate::progress::data_dir().and_then(|dir| {
             std::fs::create_dir_all(&dir).ok()?;
             File::create(dir.join("debug.log")).ok()
         });

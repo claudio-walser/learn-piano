@@ -1,4 +1,4 @@
-//! App texts with Fluent: `locales/<lang>/learn_piano.ftl`, embedded into the binary.
+//! App texts with Fluent: `locales/<lang>/openetude.ftl`, embedded into the binary.
 //!
 //! English is the source language and the fallback for missing messages. Every message id
 //! used in [`Strings::new`] is checked against the English file at compile time by `fl!`.
@@ -256,7 +256,8 @@ mod tests {
         assert_eq!(i18n.resolve(Some("de-CH")).to_string(), "de");
         assert_eq!(i18n.resolve(Some("xx")).to_string(), "en");
         let de = i18n.strings(&"de".parse().unwrap());
-        assert_eq!(de.app_title, "Klavier lernen");
+        assert_eq!(de.app_title, "OpenEtude");
+        assert_eq!(de.choose_difficulty, "Schwierigkeitsstufe wählen");
         assert_eq!(de.lesson_count(1), "1 Lektion");
         assert_eq!(de.lesson_count(4), "4 Lektionen");
         assert_eq!(de.part("A"), "Teil A");

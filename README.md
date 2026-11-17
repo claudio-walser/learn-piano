@@ -1,6 +1,9 @@
-# Learn Piano
+<img src="logos/openetude-icon.svg" width="96" align="right" alt="">
 
-Klavier lernen mit MIDI-Keyboard, MusicXML-Lektionen und Noten-Wasserfall.
+# OpenEtude
+
+Klavier lernen mit MIDI-Keyboard, MusicXML-Lektionen und Noten-Wasserfall. Freie Software –
+<https://openetude.org>
 Geschrieben in Rust, läuft auf OpenGL 2.1 / GLES 2.0 (auch sehr alte Hardware und ARM).
 
 ## Bauen
@@ -12,22 +15,22 @@ Auf Fedora Silverblue in einer Toolbox bauen:
 toolbox run -c fedora-toolbox-43 cargo build --release
 ```
 
-Das Binary `target/release/learn-piano` braucht zur Laufzeit nur `libasound.so.2`
+Das Binary `target/release/openetude` braucht zur Laufzeit nur `libasound.so.2`
 und läuft direkt auf dem Host.
 
 ## Starten
 
 ```sh
-./target/release/learn-piano                 # sucht die Bibliothek (siehe unten)
-./target/release/learn-piano --library DIR   # Bibliothek in DIR
-./target/release/learn-piano --fullscreen
-./target/release/learn-piano --x11          # X11/XWayland erzwingen (Standard: Wayland, falls die Sitzung Wayland ist)
-./target/release/learn-piano --debug        # FPS und Eingaben anzeigen, Log in ~/.local/share/learn-piano/debug.log
-./target/release/learn-piano --check-library [DIR]   # fehlende/überzählige Übersetzungen der Bibliothek
+./target/release/openetude                 # sucht die Bibliothek (siehe unten)
+./target/release/openetude --library DIR   # Bibliothek in DIR
+./target/release/openetude --fullscreen
+./target/release/openetude --x11          # X11/XWayland erzwingen (Standard: Wayland, falls die Sitzung Wayland ist)
+./target/release/openetude --debug        # FPS und Eingaben anzeigen, Log in ~/.local/share/openetude/debug.log
+./target/release/openetude --check-library [DIR]   # fehlende/überzählige Übersetzungen der Bibliothek
 ```
 
 Die Bibliothek ist der Ordner mit der `compositions.xml`. Gesucht wird in dieser Reihenfolge:
-`--library DIR`, `$LEARN_PIANO_LIBRARY`, der in den Einstellungen gewählte Ordner, dann der
+`--library DIR`, `$OPENETUDE_LIBRARY`, der in den Einstellungen gewählte Ordner, dann der
 aktuelle Ordner und der Ordner des Binaries (samt übergeordneten Ordnern). Jeweils zählt der
 Ordner selbst oder sein Unterordner `compositions/`, deshalb funktioniert auch der Projektordner.
 
@@ -37,10 +40,16 @@ Ordnerauswahl direkt an.
 
 In einer Wayland-Sitzung läuft die App nativ unter Wayland, sonst unter X11.
 Unter XWayland funktioniert Touch nicht (es kommt nie ein Loslassen an); mit `--x11`
-bzw. `--wayland` oder `LEARN_PIANO_BACKEND=x11|wayland` lässt sich die Wahl erzwingen.
+bzw. `--wayland` oder `OPENETUDE_BACKEND=x11|wayland` lässt sich die Wahl erzwingen.
 
 Ein MIDI-Keyboard wird automatisch erkannt (auch wenn es später eingesteckt wird).
 Ohne Keyboard kann man die Tasten auf dem Bildschirm antippen.
+
+**App-Menü und Icon (Linux):** `./assets/linux/install-desktop.sh` nimmt das gebaute Binary
+dieses Ordners ins App-Menü auf; Dock und Fensterliste zeigen dann das OpenEtude-Icon
+(`--uninstall` entfernt es wieder). Unter Linux kommt das Icon aus der `.desktop`-Datei, die zur
+App-ID `org.openetude.OpenEtude` des Fensters passt; unter Windows und macOS ist es ins Binary
+eingebettet (`assets/icons`).
 
 ## Bibliothek
 
@@ -87,7 +96,7 @@ Alle Texte werden mit [Fluent](https://projectfluent.org) übersetzt. Englisch i
 Ausgangssprache; fehlt eine Übersetzung, erscheint der englische Text. Die Sprachauswahl in den
 Einstellungen ergibt sich aus den vorhandenen Dateien.
 
-**App:** `locales/<sprache>/learn_piano.ftl`, beim Bauen ins Binary eingebettet. Für eine neue
+**App:** `locales/<sprache>/openetude.ftl`, beim Bauen ins Binary eingebettet. Für eine neue
 Sprache `locales/en` nach `locales/<code>` (z.B. `fr`, `pt-BR`) kopieren, die Werte übersetzen
 und `language-name` auf den Namen der Sprache in ihr selbst setzen. Jede im Code verwendete ID
 prüft `fl!` beim Kompilieren gegen die englische Datei; `cargo test` meldet IDs, die Englisch
@@ -103,7 +112,7 @@ composition-silent-night = Stille Nacht
 ```
 
 Diese Dateien liest die App zur Laufzeit, eine neue Sprache wirkt also ohne Neubau und reist mit
-der Bibliothek mit. `learn-piano --check-library [DIR]` listet pro Sprache, was fehlt oder
+der Bibliothek mit. `openetude --check-library [DIR]` listet pro Sprache, was fehlt oder
 nicht (mehr) in `compositions.xml` steht.
 
 ## Bedienung
@@ -121,13 +130,13 @@ nicht (mehr) in `compositions.xml` steht.
 - **50 / 75 / 100 %**: Tempo.
 - Tippen auf den Wasserfall pausiert, `Esc` geht zurück.
 
-Fortschritt und Einstellungen liegen in `~/.local/share/learn-piano/progress.json`.
+Fortschritt und Einstellungen liegen in `~/.local/share/openetude/progress.json`.
 
 ## Entwicklung
 
 ```sh
 cargo test
-LEARN_PIANO_SHOTS=/tmp/shots cargo run   # klickt alle Screens durch, speichert PNGs, beendet sich
+OPENETUDE_SHOTS=/tmp/shots cargo run   # klickt alle Screens durch, speichert PNGs, beendet sich
 ```
 
 ## Lizenzen
