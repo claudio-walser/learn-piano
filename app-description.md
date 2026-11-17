@@ -7,7 +7,7 @@ Ich möchte eine Software bauen um Piano zu lernen
 - Ich möchte MusicXML Files einlesen können um diese dann zu spielen
 - Du sollst beim Start die Datei compositions.xml einlesen und alle vorhanden Stücke schön visuell darstellen.
 - Jedes Stück liegt in mehreren Schwierigkeitsstufen vor, diese sind ebenfalls im compositions.xml beschrieben, mit <difficulty id="beginner"> wobei hier die id ein entsprechendes Subfolder darstellt
-- Beim Klick auf ein Stück im Dashboard, sollst du alle vorhandenen Schwierigkeiten des Stücks finden und als Auswahl aufzeigen, analog zu mockups/difficulty-selection.jpg (ohne die Schlösser, alles ist OpenSource). Bei Klick auf eine Schwierigkeit, wird immer <composition>/<difficulty>/full.musicxml abgespielt und zwar mit sound-fonts/default.sf2
+- Beim Klick auf ein Stück im Dashboard, sollst du alle vorhandenen Schwierigkeiten des Stücks finden und als Auswahl aufzeigen, analog zu mockups/difficulty-selection.jpg (ohne die Schlösser, alles ist OpenSource). Bei Klick auf eine Schwierigkeit, wird immer <composition>/<difficulty>/full.musicxml abgespielt und zwar mit assets/sound-fonts/default.sf2
 - Gibt es neben full.musicxml noch mehr files die mit 0x-part*.musicxml beginnen, handelt es sich um spezielle Lektionen von Sektionen dieses Stücks. Ich möchte diese in einer sauberen Benutzerführung durchspielen können. Nach jeder "Lektion" machst du eine Bewertung wie gespielt wurde und fragst: "Wiederholen" oder "Weiter". Nach dem spielen aller 0x-part*.musicxml lädst du die full.musicxml
 - Ich möchte unten eine Klaviatur visualisiert haben
 - Über der Klaviatur, sollen die Noten als Wasserfall herunterkommen

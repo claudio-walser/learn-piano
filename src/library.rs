@@ -150,13 +150,13 @@ fn search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// `sound-fonts/default.sf2` next to the library, in its parent folder, in the working
+/// `assets/sound-fonts/default.sf2` next to the library, in its parent folder, in the working
 /// directory or next to the executable (or one of its parents).
 pub fn find_soundfont(library: Option<&Path>) -> Option<PathBuf> {
     let near_lib = library.into_iter().flat_map(|l| [Some(l.to_path_buf()), l.parent().map(Path::to_path_buf)]).flatten();
     near_lib
         .chain(search_dirs())
-        .map(|d| d.join("sound-fonts").join("default.sf2"))
+        .map(|d| d.join("assets").join("sound-fonts").join("default.sf2"))
         .find(|p| p.is_file())
 }
 

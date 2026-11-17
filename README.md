@@ -45,8 +45,8 @@ Ohne Keyboard kann man die Tasten auf dem Bildschirm antippen.
 ## Bibliothek
 
 ```
-sound-fonts/default.sf2       Klang
-compositions/                 die Bibliothek
+assets/sound-fonts/default.sf2  Klang
+compositions/                   die Bibliothek
   compositions.xml            Liste der Stücke, Schwierigkeitsstufen und Kategorien (nur IDs, keine Texte)
   locales/<sprache>/compositions.ftl   Titel in dieser Sprache (en ist Pflicht)
   <stück>/
@@ -58,7 +58,7 @@ compositions/                 die Bibliothek
 ```
 
 `path` und `thumbnail src` in `compositions.xml` sind relativ zum Ordner der `compositions.xml`.
-Der Klang `sound-fonts/default.sf2` wird neben der Bibliothek, in ihrem übergeordneten Ordner,
+Der Klang `assets/sound-fonts/default.sf2` wird neben der Bibliothek, in ihrem übergeordneten Ordner,
 im aktuellen Ordner oder beim Binary gesucht.
 Notenzeile 1 ist die rechte Hand, Notenzeile 2 die linke. Fingersätze werden aus
 `<fingering>` gelesen.
