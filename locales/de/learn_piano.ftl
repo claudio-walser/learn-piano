@@ -11,6 +11,9 @@ no-matches = Keine passenden Stücke
 menu-songs = Songs
 menu-exercises = Übungen
 no-exercises = Keine Übungen gefunden
+no-matching-exercises = Keine passenden Übungen
+play-all = Alle spielen
+up-next = Als Nächstes
 
 ## Difficulty
 choose-difficulty = Schwierigkeitsstufe wählen

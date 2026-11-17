@@ -53,6 +53,13 @@ pub fn difficulty_color(index: usize) -> Color {
     C[index % C.len()]
 }
 
+/// Accent color of a category heading by its position. Distinct from the difficulty and hand
+/// colors, so a heading never looks like a level or a hand.
+pub fn category_color(index: usize) -> Color {
+    const C: [Color; 4] = [rgb(0xff6b9d), rgb(0x2ee6c5), rgb(0x8c9eff), rgb(0xe8c39e)];
+    C[index % C.len()]
+}
+
 // ------------------------------------------------------------ UI scaling
 //
 // The UI is laid out on a virtual canvas of at least 1280 x 800 units that is
@@ -601,6 +608,33 @@ pub fn icon_category(tag: Option<&str>, c: Vec2, size: f32, color: Color, bg: Co
             draw_circle(x + s * 0.4, y - s * 0.35, s * 0.38, color);
             draw_triangle(vec2(x + s * 0.7, y - s * 0.45), vec2(x + s * 0.7, y - s * 0.2), vec2(x + s * 1.0, y - s * 0.32), color);
             draw_circle(x + s * 0.48, y - s * 0.45, s * 0.08, bg);
+        }
+        Some("scales") => icon_steps(c, size, color),
+        // Three stacked note heads on one stem, like a chord in the score.
+        Some("chords") => {
+            for k in 0..3 {
+                let cy = y + s * (0.75 - 0.68 * k as f32);
+                draw_ellipse(x - s * 0.25, cy, s * 0.4, s * 0.2, -15.0, color);
+            }
+            draw_line(x + s * 0.13, y + s * 0.72, x + s * 0.13, y - s * 1.0, s * 0.1, color);
+        }
+        // Flame (warming up).
+        Some("warm-up") => {
+            let flame = |cy: f32, r: f32, col: Color| {
+                draw_circle(x, cy, r, col);
+                draw_triangle(vec2(x - r * 0.97, cy - r * 0.25), vec2(x + r * 0.97, cy - r * 0.25), vec2(x + r * 0.15, cy - r * 2.3), col);
+            };
+            flame(y + s * 0.38, s * 0.58, color);
+            flame(y + s * 0.6, s * 0.26, bg);
+        }
+        // Two arrows in opposite directions: the hands doing different things.
+        Some("coordination") => {
+            let w = s * 0.16;
+            for (dy, dir) in [(-0.4f32, 1.0f32), (0.4, -1.0)] {
+                let (x0, x1, yy) = (x - dir * s * 0.85, x + dir * s * 0.45, y + dy * s);
+                draw_line(x0, yy, x1, yy, w, color);
+                draw_triangle(vec2(x1 + dir * s * 0.45, yy), vec2(x1, yy - s * 0.32), vec2(x1, yy + s * 0.32), color);
+            }
         }
         Some(_) => icon_note(c, size, color),
     }

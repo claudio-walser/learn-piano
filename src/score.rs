@@ -24,7 +24,6 @@ pub struct Note {
 
 #[derive(Clone, Debug)]
 pub struct Score {
-    pub title: Option<String>,
     /// Sorted by start time, then pitch.
     pub notes: Vec<Note>,
     /// Start time of every measure in playback order (for bar lines).
@@ -125,12 +124,6 @@ pub fn parse(text: &str) -> Result<Score, String> {
     if !root.has_tag_name("score-partwise") {
         return Err("only score-partwise MusicXML is supported".into());
     }
-    let title = root
-        .descendants()
-        .find(|n| n.has_tag_name("work-title") || n.has_tag_name("movement-title"))
-        .and_then(|n| n.text())
-        .map(|t| t.trim().to_string());
-
     let mut measures: Vec<Measure> = Vec::new();
     let mut max_staves: u8 = 0;
     let mut parts: Vec<String> = Vec::new();
@@ -360,7 +353,6 @@ pub fn parse(text: &str) -> Result<Score, String> {
 
     let duration = out.iter().map(|n| n.end).fold(to_sec(end_q), f64::max);
     Ok(Score {
-        title,
         notes: out,
         measures: measure_q.into_iter().map(to_sec).collect(),
         measure_numbers: order.iter().map(|&mi| measures[mi].number.clone()).collect(),

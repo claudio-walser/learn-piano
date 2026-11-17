@@ -13,6 +13,9 @@ no-matches = No matching pieces
 menu-songs = Songs
 menu-exercises = Exercises
 no-exercises = No exercises found
+no-matching-exercises = No matching exercises
+play-all = Play all
+up-next = Up next
 
 ## Difficulty
 choose-difficulty = Choose difficulty

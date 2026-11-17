@@ -72,11 +72,14 @@ sondern ein Duett. Sie wird in der Auswahl abgesetzt angezeigt. Die MusicXML ent
 der Liste, in der Reihenfolge des Blocks `<tags>` in `compositions.xml`.
 
 **Übungen:** Das Dashboard hat links ein Menü mit „Songs“ und „Übungen“. Übungen stehen in
-`compositions.xml` im Block `<exercises>` als `<exercise id="…" path="…"/>` und sind genau wie
-Stücke aufgebaut (Schwierigkeits-Ordner, Lektionen, `full.musicxml`). Ihr Titel ist
-`exercise-<id>` in `compositions.ftl`. Sie erscheinen in der Reihenfolge der Datei, nicht in
-Suche und Filtern der Songs. Ohne `thumbnail` zeigt die Karte eine kleine Klaviatur mit den
-Tasten der Übung (rechte Hand blau, linke orange).
+`compositions.xml` im Block `<exercises>` als `<exercise id="…" path="…">` und sind genau wie
+Stücke aufgebaut (Schwierigkeits-Ordner, Lektionen, `full.musicxml`, `<tags>`). Ihr Titel ist
+`exercise-<id>` in `compositions.ftl`. Beide Bereiche haben eigene Suche, Schwierigkeits- und
+Kategorie-Filter; es erscheinen nur die Stufen und Kategorien, die im Bereich vorkommen. Übungen
+sind nach Kategorie gruppiert und nach Schwierigkeit sortiert, bei gleicher Stufe in der
+Reihenfolge der Datei. Die erste noch nicht bestandene Übung jeder Kategorie ist als „Als Nächstes“
+markiert. „Alle spielen“ spielt eine Kategorie durch: Nach jeder Übung führt „Weiter“ zur nächsten. Ohne `thumbnail` zeigt die Karte eine kleine
+Klaviatur mit den Tasten der Übung (rechte Hand blau, linke orange).
 
 ## Übersetzungen
 

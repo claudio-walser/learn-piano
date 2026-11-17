@@ -72,6 +72,9 @@ pub struct Strings {
     pub menu_songs: &'static str,
     pub menu_exercises: &'static str,
     pub no_exercises: &'static str,
+    pub no_matching_exercises: &'static str,
+    pub play_all: &'static str,
+    pub up_next: &'static str,
 }
 
 fn leak(s: String) -> &'static str {
@@ -136,6 +139,9 @@ impl Strings {
             menu_songs: t!("menu-songs"),
             menu_exercises: t!("menu-exercises"),
             no_exercises: t!("no-exercises"),
+            no_matching_exercises: t!("no-matching-exercises"),
+            play_all: t!("play-all"),
+            up_next: t!("up-next"),
             loader: l,
         }
     }

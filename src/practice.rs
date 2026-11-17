@@ -415,7 +415,6 @@ mod tests {
     fn score() -> Score {
         let n = |pitch, start: f64, staff| Note { pitch, start, end: start + 0.5, staff, finger: None, part: 0 };
         Score {
-            title: None,
             notes: vec![n(60, 0.0, 1), n(48, 0.0, 2), n(62, 1.0, 1)],
             measures: vec![0.0],
             measure_numbers: vec!["1".into()],

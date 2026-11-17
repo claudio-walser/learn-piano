@@ -128,6 +128,16 @@ async fn run() {
     }
 }
 
+/// Search and filters of the section of the menu that is not shown.
+#[derive(Default)]
+struct Filter {
+    search: String,
+    difficulty: Option<usize>,
+    category: Option<String>,
+    category_scroll: f32,
+    scroll: f32,
+}
+
 /// Entries of the dashboard's menu.
 #[derive(Clone, Copy, PartialEq)]
 enum Section {
@@ -193,6 +203,8 @@ struct Player {
     /// Celebration for a run above 90 %.
     fireworks: Option<Fireworks>,
     touch_key: Option<u8>,
+    /// Set while a whole category is played through.
+    playlist: Option<Playlist>,
 }
 
 enum Action {
@@ -200,6 +212,27 @@ enum Action {
     OpenComposition(usize),
     StartLevel(usize, usize),
     OpenLesson(usize, usize, usize),
+    /// Play the exercise at `pos` of the list (from its first lesson).
+    PlayList(Playlist),
+}
+
+/// A category of exercises played through one after the other.
+#[derive(Clone)]
+struct Playlist {
+    /// The category; `None` for exercises without one.
+    tag: Option<String>,
+    items: Vec<usize>,
+    pos: usize,
+}
+
+/// A block of cards on the dashboard: a category of exercises, or all songs.
+struct Group {
+    tag: Option<String>,
+    /// Heading with a "play all" button; `None` for no heading.
+    title: Option<String>,
+    /// Color of the heading.
+    accent: Color,
+    items: Vec<usize>,
 }
 
 struct App {
@@ -208,6 +241,8 @@ struct App {
     thumbs: Vec<Thumb>,
     /// Entry of the dashboard's menu.
     section: Section,
+    /// Search and filters of the other entry (swapped in by [`App::switch_section`]).
+    parked: Filter,
     audio: Audio,
     midi: Midi,
     echo: Arc<AtomicBool>,
@@ -351,6 +386,7 @@ impl App {
             lib,
             thumbs,
             section: Section::Songs,
+            parked: Filter::default(),
             audio,
             midi,
             echo,
@@ -432,7 +468,7 @@ impl App {
             } else {
                 action = match &self.screen {
                     Screen::Difficulty(_) | Screen::Error(_) => Some(Action::Home),
-                    Screen::Player(p) => Some(Action::OpenComposition(p.comp)),
+                    Screen::Player(p) => Some(App::player_back(p)),
                     Screen::Dashboard => None,
                 };
             }
@@ -480,10 +516,21 @@ impl App {
             300 => shot("6-settings.png"),
             301 => {
                 self.show_settings = false;
-                self.section = Section::Exercises;
+                self.switch_section(Section::Exercises);
             }
             320 => shot("7-exercises.png"),
-            321 => std::process::exit(0),
+            321 => {
+                // Play the first category through; the result offers the next exercise.
+                let lib = self.lib.as_ref().unwrap();
+                let tag = lib.categories(true).into_iter().next();
+                let items = lib.visible(true, None, tag.as_deref(), "");
+                self.apply(Action::PlayList(Playlist { tag, items, pos: 0 }));
+                if let Screen::Player(p) = &mut self.screen {
+                    p.result = Some(p.practice.summary());
+                }
+            }
+            340 => shot("8-category-result.png"),
+            341 => std::process::exit(0),
             _ => {}
         }
     }
@@ -491,6 +538,11 @@ impl App {
     fn apply(&mut self, a: Action) {
         self.audio.all_off();
         self.search_focus = false;
+        // A playlist continues across the lessons of its exercises.
+        let carry = match &mut self.screen {
+            Screen::Player(p) => p.playlist.take(),
+            _ => None,
+        };
         match a {
             Action::Home => self.screen = Screen::Dashboard,
             Action::OpenComposition(c) => self.screen = Screen::Difficulty(c),
@@ -504,8 +556,27 @@ impl App {
                     .unwrap_or(lessons.len() - 1);
                 self.open_lesson(c, l, i);
             }
-            Action::OpenLesson(c, l, i) => self.open_lesson(c, l, i),
+            Action::OpenLesson(c, l, i) => {
+                self.open_lesson(c, l, i);
+                self.set_playlist(carry);
+            }
+            Action::PlayList(pl) => {
+                self.open_lesson(pl.items[pl.pos], 0, 0);
+                self.set_playlist(Some(pl));
+            }
         }
+    }
+
+    fn set_playlist(&mut self, pl: Option<Playlist>) {
+        if let Screen::Player(p) = &mut self.screen {
+            p.playlist = pl;
+        }
+    }
+
+    /// Where "back" leads from the player: the dashboard while playing a category through,
+    /// otherwise the difficulty selection.
+    fn player_back(p: &Player) -> Action {
+        if p.playlist.is_some() { Action::Home } else { Action::OpenComposition(p.comp) }
     }
 
     fn open_lesson(&mut self, c: usize, l: usize, i: usize) {
@@ -537,6 +608,7 @@ impl App {
             last_run: None,
             fireworks: None,
             touch_key: None,
+            playlist: None,
         }));
     }
 
@@ -570,10 +642,7 @@ impl App {
         if self.lib.is_none() {
             return None;
         }
-        let action = match self.section {
-            Section::Songs => self.songs(ptr, area),
-            Section::Exercises => self.exercises(ptr, area),
-        };
+        let action = self.browse(ptr, area);
         self.sidebar(ptr, Rect::new(0.0, header, side, h - header));
         self.dashboard_header(ptr, header);
         action
@@ -588,6 +657,7 @@ impl App {
         let wide = r.w > 120.0;
         let items = [(Section::Songs, s.menu_songs), (Section::Exercises, s.menu_exercises)];
         let mut y = r.y + 8.0;
+        let mut picked = None;
         for (section, label) in items {
             let item = if wide { Rect::new(16.0, y, r.w - 32.0, 52.0) } else { Rect::new(10.0, y, r.w - 20.0, 72.0) };
             y += item.h + 8.0;
@@ -612,14 +682,27 @@ impl App {
                 text_center(&f.bold, label, item.x + item.w / 2.0, item.y + 56.0, size, fg);
             }
             if ptr.tapped(item) && !selected {
-                self.section = section;
-                self.scroll = 0.0;
-                self.search_focus = false;
+                picked = Some(section);
             }
+        }
+        if let Some(section) = picked {
+            self.switch_section(section);
         }
     }
 
-    /// Title, search field (songs only), MIDI status and settings.
+    /// Shows another section of the menu; each section keeps its own search and filters.
+    fn switch_section(&mut self, section: Section) {
+        let p = &mut self.parked;
+        std::mem::swap(&mut self.search, &mut p.search);
+        std::mem::swap(&mut self.difficulty, &mut p.difficulty);
+        std::mem::swap(&mut self.category, &mut p.category);
+        std::mem::swap(&mut self.category_scroll, &mut p.category_scroll);
+        std::mem::swap(&mut self.scroll, &mut p.scroll);
+        self.section = section;
+        self.search_focus = false;
+    }
+
+    /// Title, search field, MIDI status and settings.
     fn dashboard_header(&mut self, ptr: &Pointer, header: f32) {
         let s = self.s();
         let w = vw();
@@ -631,10 +714,6 @@ impl App {
             self.show_settings = true;
         }
         let pill_x = self.midi_pill(gear.x - 14.0, header / 2.0);
-        if self.section != Section::Songs {
-            while get_char_pressed().is_some() {}
-            return;
-        }
         let field_left = 32.0 + text_width(&f.bold, s.app_title, 38.0) + 32.0;
         let field_right = pill_x - 16.0;
         let field_h = 48.0;
@@ -660,17 +739,25 @@ impl App {
         }
     }
 
-    /// Scrollable grid of cards for the compositions `items` in `area`. Cards that scroll
-    /// above the area are covered, so whatever is drawn above it afterwards stays clean.
-    fn card_grid(&mut self, ptr: &Pointer, items: &[usize], area: Rect) -> Option<Action> {
+    /// Scrollable grid of cards in `area`, one block per group, each with an optional heading
+    /// and a button to play the whole group. `guide`: mark the first card of each group not
+    /// passed yet as "up next". Cards that scroll above the area are covered, so whatever is
+    /// drawn above it afterwards stays clean.
+    fn card_grid(&mut self, ptr: &Pointer, groups: &[Group], area: Rect, guide: bool) -> Option<Action> {
+        let s = self.s();
         let lib = self.lib.as_ref()?;
+        let f = &self.fonts;
         let top = area.y;
         let gap = 28.0;
+        let head_h = 76.0;
         let cw = (area.w - 48.0).min(280.0);
         let ch = cw + 104.0;
         let cols = ((area.w - 48.0 + gap) / (cw + gap)).floor().max(1.0) as usize;
-        let rows = items.len().div_ceil(cols);
-        let content_h = rows as f32 * (ch + gap) + 24.0;
+        let block_h = |g: &Group| {
+            let head = if g.title.is_some() { head_h } else { 0.0 };
+            head + g.items.len().div_ceil(cols) as f32 * (ch + gap)
+        };
+        let content_h = groups.iter().map(block_h).sum::<f32>() + 24.0;
         let max_scroll = (content_h - area.h).max(0.0);
         if ptr.dragging() && area.contains(ptr.press_pos) {
             self.scroll -= ptr.delta.y;
@@ -682,39 +769,87 @@ impl App {
 
         let grid_w = cols as f32 * cw + (cols - 1) as f32 * gap;
         let x0 = area.x + (area.w - grid_w) / 2.0;
-        let y0 = top + 8.0 - self.scroll;
+        let mut y = top + 8.0 - self.scroll;
         let mut action = None;
-        for (k, &i) in items.iter().enumerate() {
+        let passed = |i: usize| {
             let comp = &lib.compositions[i];
-            let (col, row) = (k % cols, k / cols);
-            let card = Rect::new(x0 + col as f32 * (cw + gap), y0 + row as f32 * (ch + gap), cw, ch);
-            if card.y > area.y + area.h || card.y + card.h < top {
-                continue;
+            comp.levels.iter().enumerate().all(|(li, l)| self.progress.stars(&lesson_key(lib, i, li, l.lessons.last().unwrap())) > 0)
+        };
+        for g in groups {
+            // ---- heading with "play all"
+            if let Some(title) = &g.title {
+                let cy = y + head_h / 2.0 - 10.0;
+                let label = s.play_all;
+                let bw = text_width(&f.bold, label, 17.0) + 60.0;
+                let r = Rect::new(x0 + grid_w - bw, cy - 20.0, bw, 40.0);
+                // Badge with the category's icon and a line in its color; the title stays white.
+                let badge = Rect::new(x0, cy - 21.0, 42.0, 42.0);
+                rounded_rect(badge, 12.0, g.accent);
+                icon_category(g.tag.as_deref().or(Some("")), badge.center(), 24.0, BG, g.accent);
+                let tx = badge.x + badge.w + 14.0;
+                let tw = r.x - tx - 16.0;
+                text_left(&f.bold, title, tx, cy, fit_size(&f.bold, title, 28.0, tw), TEXT);
+                draw_rectangle(x0, cy + 30.0, grid_w, 2.0, alpha(g.accent, 0.35));
+                rounded_rect(r, 20.0, if ptr.pressing(r) { PANEL_HI } else { PANEL });
+                icon_play(vec2(r.x + 24.0, cy), 18.0, GOOD);
+                text_left(&f.bold, label, r.x + 42.0, cy, 17.0, TEXT);
+                if ptr.tapped(r) && area.contains(ptr.pos) {
+                    action = Some(Action::PlayList(Playlist { tag: g.tag.clone(), items: g.items.clone(), pos: 0 }));
+                }
+                y += head_h;
             }
-            rounded_rect(card, 18.0, if ptr.pressing(card) { PANEL_HI } else { PANEL });
-            let img = Rect::new(card.x + 12.0, card.y + 12.0, cw - 24.0, cw - 24.0);
-            self.draw_thumb(i, img);
-            let title = comp.title.as_str();
-            let ts = fit_size(&self.fonts.bold, title, 23.0, cw - 32.0);
-            text_left(&self.fonts.bold, title, card.x + 16.0, img.y + img.h + 26.0, ts, TEXT);
-            if let Some(c) = &comp.composer {
-                text_left(&self.fonts.regular, c, card.x + 16.0, img.y + img.h + 54.0, 17.0, MUTED);
-            }
-            // One dot per difficulty level; filled when the full piece was passed.
-            for (li, level) in comp.levels.iter().enumerate() {
-                let full = level.lessons.last().unwrap();
-                let done = self.progress.stars(&lesson_key(lib, i, li, full)) > 0;
-                let col = difficulty_color(level.difficulty_index);
-                let (cx, cy) = (card.x + 24.0 + li as f32 * 26.0, card.y + card.h - 20.0);
-                if done {
-                    draw_circle(cx, cy, 8.0, col);
-                } else {
-                    draw_circle_lines(cx, cy, 8.0, 2.0, col);
+            let next = if guide { g.items.iter().copied().find(|&i| !passed(i)) } else { None };
+            // ---- cards
+            for (k, &i) in g.items.iter().enumerate() {
+                let comp = &lib.compositions[i];
+                let (col, row) = (k % cols, k / cols);
+                let card = Rect::new(x0 + col as f32 * (cw + gap), y + row as f32 * (ch + gap), cw, ch);
+                if card.y > area.y + area.h || card.y + card.h < top {
+                    continue;
+                }
+                let is_next = next == Some(i);
+                if is_next {
+                    rounded_rect(Rect::new(card.x - 3.0, card.y - 3.0, card.w + 6.0, card.h + 6.0), 21.0, GOOD);
+                }
+                rounded_rect(card, 18.0, if ptr.pressing(card) { PANEL_HI } else { PANEL });
+                let img = Rect::new(card.x + 12.0, card.y + 12.0, cw - 24.0, cw - 24.0);
+                self.draw_thumb(i, img);
+                if is_next {
+                    let label = s.up_next;
+                    let pw = text_width(&f.bold, label, 15.0) + 24.0;
+                    let pill = Rect::new(img.x + 10.0, img.y + 10.0, pw, 30.0);
+                    rounded_rect(pill, 15.0, GOOD);
+                    text_left(&f.bold, label, pill.x + 12.0, pill.y + 15.0, 15.0, BG);
+                }
+                let title = comp.title.as_str();
+                let ts = fit_size(&f.bold, title, 23.0, cw - 32.0);
+                text_left(&f.bold, title, card.x + 16.0, img.y + img.h + 26.0, ts, TEXT);
+                if let Some(c) = &comp.composer {
+                    text_left(&f.regular, c, card.x + 16.0, img.y + img.h + 54.0, 17.0, MUTED);
+                }
+                // One dot per difficulty level; filled when the full piece was passed.
+                let cy = card.y + card.h - 20.0;
+                for (li, level) in comp.levels.iter().enumerate() {
+                    let full = level.lessons.last().unwrap();
+                    let done = self.progress.stars(&lesson_key(lib, i, li, full)) > 0;
+                    let col = difficulty_color(level.difficulty_index);
+                    let cx = card.x + 24.0 + li as f32 * 26.0;
+                    if done {
+                        draw_circle(cx, cy, 8.0, col);
+                    } else {
+                        draw_circle_lines(cx, cy, 8.0, 2.0, col);
+                    }
+                }
+                // A single level (exercises): name it next to its dot.
+                if let [level] = comp.levels.as_slice() {
+                    let name = lib.difficulty_title(level);
+                    text_left(&f.regular, &name, card.x + 42.0, cy, 16.0, MUTED);
+                }
+                if ptr.tapped(card) && area.contains(ptr.pos) {
+                    action = Some(Action::OpenComposition(i));
                 }
             }
-            if ptr.tapped(card) && area.contains(ptr.pos) {
-                action = Some(Action::OpenComposition(i));
-            }
+            y += g.items.len().div_ceil(cols) as f32 * (ch + gap);
         }
         draw_rectangle(area.x, 0.0, area.w, top, BG);
         action
@@ -732,34 +867,54 @@ impl App {
         }
     }
 
-    fn exercises(&mut self, ptr: &Pointer, area: Rect) -> Option<Action> {
-        let items = self.lib.as_ref()?.exercises();
-        let action = self.card_grid(ptr, &items, area);
-        if items.is_empty() {
-            let c = vec2(area.x + area.w / 2.0, area.y + area.h / 2.0);
-            text_center(&self.fonts.regular, self.s().no_exercises, c.x, c.y, 24.0, MUTED);
-        }
-        action
-    }
-
-    fn songs(&mut self, ptr: &Pointer, area: Rect) -> Option<Action> {
+    /// Songs or exercises (by the menu): difficulty chips, categories and the cards.
+    fn browse(&mut self, ptr: &Pointer, area: Rect) -> Option<Action> {
         let s = self.s();
         let w = vw();
         let (left, right) = (area.x, area.x + area.w);
+        let ex = self.section == Section::Exercises;
         let lib = self.lib.as_ref()?;
         // Difficulty row only when there is something to choose from.
-        let diffs = lib.used_difficulties();
+        let diffs = lib.used_difficulties(ex);
         let diff_bar = Rect::new(left, area.y, area.w, if diffs.len() > 1 { 56.0 } else { 0.0 });
         let bar = Rect::new(left, diff_bar.y + diff_bar.h, area.w, 64.0);
         let top = bar.y + bar.h;
-        let visible = lib.visible(self.difficulty, self.category.as_deref(), &self.search);
-        let no_songs = !lib.compositions.iter().any(|c| !c.exercise);
+        let visible = lib.visible(ex, self.difficulty, self.category.as_deref(), &self.search);
+        let none = !lib.compositions.iter().any(|c| c.exercise == ex);
 
-        // ---- pieces: sorted by title, filtered by difficulty, category and search
+        // ---- cards: filtered by difficulty, category and search. Exercises are grouped by
+        // category (an exercise with two categories appears in both), songs are one block.
+        let groups: Vec<Group> = if ex {
+            let cats = match &self.category {
+                Some(c) => vec![c.clone()],
+                None => lib.categories(true),
+            };
+            let in_cat = |t: &str| visible.iter().copied().filter(|&i| lib.compositions[i].tags.iter().any(|x| x == t)).collect();
+            // The color follows the category, not its place on screen, so it stays when filtering.
+            let all_cats = lib.categories(true);
+            let accent = |t: &str| category_color(all_cats.iter().position(|c| c == t).unwrap_or(0));
+            let mut gs: Vec<Group> = cats
+                .into_iter()
+                .map(|t| Group { title: Some(lib.tag_title(&t)), accent: accent(&t), items: in_cat(&t), tag: Some(t) })
+                .filter(|g| !g.items.is_empty())
+                .collect();
+            let untagged: Vec<usize> = visible.iter().copied().filter(|&i| lib.compositions[i].tags.is_empty()).collect();
+            if self.category.is_none() && !untagged.is_empty() {
+                gs.push(Group { tag: None, title: Some(s.menu_exercises.to_string()), accent: MUTED, items: untagged });
+            }
+            gs
+        } else {
+            vec![Group { tag: None, title: None, accent: TEXT, items: visible.clone() }]
+        };
         let grid = Rect::new(left, top, area.w, area.y + area.h - top);
-        let action = self.card_grid(ptr, &visible, grid);
+        let action = self.card_grid(ptr, &groups, grid, ex);
         if visible.is_empty() {
-            let msg = if no_songs { s.no_compositions } else { s.no_matches };
+            let msg = match (ex, none) {
+                (false, true) => s.no_compositions,
+                (false, false) => s.no_matches,
+                (true, true) => s.no_exercises,
+                (true, false) => s.no_matching_exercises,
+            };
             text_center(&self.fonts.regular, msg, grid.x + grid.w / 2.0, grid.y + grid.h / 2.0, 24.0, MUTED);
         }
         let lib = self.lib.as_ref()?;
@@ -799,7 +954,7 @@ impl App {
 
         // ---- category carousel: "All" plus every tag in use; scrolls sideways when too wide
         let mut chips: Vec<(Option<String>, String)> = vec![(None, s.all.to_string())];
-        chips.extend(lib.categories().into_iter().map(|id| {
+        chips.extend(lib.categories(ex).into_iter().map(|id| {
             let t = lib.tag_title(&id);
             (Some(id), t)
         }));
@@ -1090,7 +1245,7 @@ impl App {
         draw_rectangle(0.0, 0.0, w, top_h + ctrl_h, BG);
         let back = Rect::new(12.0, 8.0, 52.0, 52.0);
         if icon_button(ptr, back, PANEL, |c| icon_back(c, 26.0, TEXT)) {
-            action = Some(Action::OpenComposition(p.comp));
+            action = Some(App::player_back(p));
         }
         let diff_col = difficulty_color(level.difficulty_index);
 
@@ -1124,13 +1279,19 @@ impl App {
         let title_w = chips_left - 80.0 - 12.0;
         let title = comp.title.as_str();
         text_left(&f.bold, title, 80.0, 24.0, fit_size(&f.bold, title, 24.0, title_w), TEXT);
-        let lesson_title = p
-            .practice
-            .score
-            .title
-            .clone()
-            .unwrap_or_else(|| lesson_label(s, &level.lessons[p.lesson]));
-        let sub = format!("{} · {}", lib.difficulty_title(level), lesson_title);
+        // Subtitle from the translated texts (not the MusicXML title, which has one language):
+        // category and position while playing one through, the level, and the lesson when the
+        // level has several.
+        let mut sub: Vec<String> = Vec::new();
+        if let Some(pl) = &p.playlist {
+            let cat = pl.tag.as_deref().map_or_else(|| s.menu_exercises.to_string(), |t| lib.tag_title(t));
+            sub.push(format!("{cat} {}/{}", pl.pos + 1, pl.items.len()));
+        }
+        sub.push(lib.difficulty_title(level));
+        if level.lessons.len() > 1 {
+            sub.push(lesson_label(s, &level.lessons[p.lesson]));
+        }
+        let sub = sub.join(" · ");
         text_left(&f.regular, &sub, 80.0, 50.0, fit_size(&f.regular, &sub, 17.0, title_w), diff_col);
 
         // Control row
@@ -1223,13 +1384,17 @@ impl App {
         draw_rectangle(0.0, wf.y, w * p.practice.fraction(), 4.0, diff_col);
 
         if let Some(sum) = p.result {
-            let is_last = p.lesson + 1 >= level.lessons.len();
+            let last_lesson = p.lesson + 1 >= level.lessons.len();
+            // While playing a category through, "next" after an exercise starts the next one.
+            let next_exercise = p.playlist.as_ref().filter(|pl| pl.pos + 1 < pl.items.len()).map(|pl| Playlist { pos: pl.pos + 1, ..pl.clone() });
+            let is_last = last_lesson && next_exercise.is_none();
             match self.result_overlay(&sum, p.practice.mode, is_last, p.fireworks.as_ref()) {
                 Some(true) => {
                     p.practice.restart(&self.audio);
                     p.result = None;
                 }
-                Some(false) if is_last => action = Some(Action::OpenComposition(p.comp)),
+                Some(false) if is_last => action = Some(App::player_back(p)),
+                Some(false) if last_lesson => action = next_exercise.map(Action::PlayList),
                 Some(false) => action = Some(Action::OpenLesson(p.comp, p.level, p.lesson + 1)),
                 None => {}
             }

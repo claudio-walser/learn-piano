@@ -19,12 +19,18 @@
   <difficulty id="duet" kind="duet"/>
 </difficulties>
 
-<!-- Categories shown above the pieces, in this order. A composition uses them with <tag>id</tag>. -->
+<!-- Categories shown above the pieces (or exercises), in this order. A composition or exercise uses
+     them with <tag>id</tag>; only the categories in use in a section appear there. -->
 <tags>
   <tag id="children"/>
   <tag id="classical"/>
   <tag id="christmas"/>
   <tag id="birthday"/>
+  <!-- exercises -->
+  <tag id="warm-up"/>
+  <tag id="coordination"/>
+  <tag id="scales"/>
+  <tag id="chords"/>
 </tags>
 
 <compositions>
@@ -87,14 +93,96 @@
 
 </compositions>
 
-<!-- Exercises (scales, chords, …), shown under "Exercises" in the menu. Same structure as a
+<!-- Exercises (scales, chords, …), shown under "Exercises" in the menu, grouped by category and
+     sorted by difficulty; within a difficulty in the order of this file (easier ones first). Same structure as a
      composition (difficulty subfolders with full.musicxml and optional lessons); titles are
      exercise-<id> in compositions.ftl. -->
 <exercises>
 
-  <exercise id="c-major-scale" path="exercises/c-major-scale"/>
+  <exercise id="five-finger-c" path="exercises/five-finger-c">
+    <tags>
+      <tag>warm-up</tag>
+    </tags>
+  </exercise>
 
-  <exercise id="c-major-chords" path="exercises/c-major-chords"/>
+  <exercise id="alternating-hands" path="exercises/alternating-hands">
+    <tags>
+      <tag>coordination</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="hold-and-move" path="exercises/hold-and-move">
+    <tags>
+      <tag>coordination</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="contrary-motion" path="exercises/contrary-motion">
+    <tags>
+      <tag>warm-up</tag>
+      <tag>coordination</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="two-against-one" path="exercises/two-against-one">
+    <tags>
+      <tag>coordination</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="c-major-scale" path="exercises/c-major-scale">
+    <tags>
+      <tag>scales</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="a-minor-scale" path="exercises/a-minor-scale">
+    <tags>
+      <tag>scales</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="c-major-triads" path="exercises/c-major-triads">
+    <tags>
+      <tag>chords</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="broken-chords" path="exercises/broken-chords">
+    <tags>
+      <tag>chords</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="c-major-chords" path="exercises/c-major-chords">
+    <tags>
+      <tag>chords</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="melody-and-accompaniment" path="exercises/melody-and-accompaniment">
+    <tags>
+      <tag>coordination</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="g-major-scale" path="exercises/g-major-scale">
+    <tags>
+      <tag>scales</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="f-major-scale" path="exercises/f-major-scale">
+    <tags>
+      <tag>scales</tag>
+    </tags>
+  </exercise>
+
+  <exercise id="c-major-inversions" path="exercises/c-major-inversions">
+    <tags>
+      <tag>chords</tag>
+    </tags>
+  </exercise>
 
 </exercises>
 
